@@ -1,0 +1,61 @@
+INFO:     Will watch for changes in these directories: ['/Users/fahadalmanee/pythonProject']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [32629] using StatReload
+🚀 Starting Dashcam Management Platform API...
+📍 Server will be available at: http://127.0.0.1:8000
+📚 API Documentation: http://127.0.0.1:8000/docs
+🔄 Auto-reload: Enabled
+==================================================
+Process SpawnProcess-1:
+Traceback (most recent call last):
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/uvicorn/_subprocess.py", line 76, in subprocess_started
+    target(sockets=sockets)
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/uvicorn/server.py", line 61, in run
+    return asyncio.run(self.serve(sockets=sockets))
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/uvicorn/server.py", line 68, in serve
+    config.load()
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/uvicorn/config.py", line 467, in load
+    self.loaded_app = import_from_string(self.app)
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/uvicorn/importer.py", line 21, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1030, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1007, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 986, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 680, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 850, in exec_module
+  File "<frozen importlib._bootstrap>", line 228, in _call_with_frames_removed
+  File "/Users/fahadalmanee/pythonProject/main.py", line 1, in <module>
+    from fastapi import FastAPI
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/__init__.py", line 7, in <module>
+    from .applications import FastAPI as FastAPI
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/applications.py", line 16, in <module>
+    from fastapi import routing
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/routing.py", line 22, in <module>
+    from fastapi import params
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/params.py", line 5, in <module>
+    from fastapi.openapi.models import Example
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/openapi/models.py", line 4, in <module>
+    from fastapi._compat import (
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/_compat.py", line 20, in <module>
+    from fastapi.exceptions import RequestErrorModel
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/fastapi/exceptions.py", line 3, in <module>
+    from pydantic import BaseModel, create_model
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic/__init__.py", line 372, in __getattr__
+    module = import_module(module_name, package=package)
+  File "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/importlib/__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic/main.py", line 11, in <module>
+    import pydantic_core
+  File "/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic_core/__init__.py", line 6, in <module>
+    from ._pydantic_core import (
+ImportError: dlopen(/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic_core/_pydantic_core.cpython-39-darwin.so, 0x0002): tried: '/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic_core/_pydantic_core.cpython-39-darwin.so' (mach-o file, but is an incompatible architecture (have 'arm64', need 'x86_64')), '/System/Volumes/Preboot/Cryptexes/OS/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic_core/_pydantic_core.cpython-39-darwin.so' (no such file), '/Users/fahadalmanee/pythonProject/.venv/lib/python3.9/site-packages/pydantic_core/_pydantic_core.cpython-39-darwin.so' (mach-o file, but is an incompatible architecture (have 'arm64', need 'x86_64'))
+INFO:     Stopping reloader process [32629]

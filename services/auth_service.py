@@ -1,0 +1,157 @@
+from fastapi import HTTPException, Depends, status
+from sqlalchemy.orm import Session
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
+from fastapi.security import OAuth2PasswordBearer
+from database import SessionLocal, get_db
+from models.user_db import UserDB
+from models.user import UserCreate, UserLogin
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# 🔑 Security settings
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+
+# Password hashing (use pbkdf2_sha256 for broad compatibility on macOS)
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+# JWT creation
+def create_access_token(data: dict, expires_delta: int = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=expires_delta or ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+# Database helpers
+def create_user(user_data: dict, db: Session = None):
+    """Create a new user with invoice number (admin function)"""
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    else:
+        close_db = False
+    
+    try:
+        existing = db.query(UserDB).filter(UserDB.invoice_no == user_data["invoice_no"]).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Invoice number already exists")
+        
+        db_user = UserDB(
+            invoice_no=user_data["invoice_no"],
+            password_hash=hash_password(user_data["password"]),
+            name=user_data["name"],
+            email=user_data.get("email")
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        return {"msg": "User created successfully", "user_id": db_user.id}
+    finally:
+        if close_db:
+            db.close()
+
+def login_user(user: UserLogin):
+    """Login with invoice number and password"""
+    db: Session = SessionLocal()
+    try:
+        # Assuming UserLogin now has invoice_no instead of username
+        db_user = db.query(UserDB).filter(UserDB.invoice_no == user.invoice_no).first()
+        if not db_user or not verify_password(user.password, db_user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid invoice number or password")
+        
+        token = create_access_token({
+            "sub": db_user.invoice_no,
+            "user_id": db_user.id,
+            "name": db_user.name
+        })
+        return {
+            "access_token": token, 
+            "token_type": "bearer",
+            "user": {
+                "id": db_user.id,
+                "invoice_no": db_user.invoice_no,
+                "name": db_user.name,
+                "email": db_user.email
+            }
+        }
+    finally:
+        db.close()
+
+def change_password(invoice_no: str, new_password: str, db: Session = None):
+    """Change user password"""
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    else:
+        close_db = False
+    
+    try:
+        db_user = db.query(UserDB).filter(UserDB.invoice_no == invoice_no).first()
+        if not db_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        db_user.password_hash = hash_password(new_password)
+        db.commit()
+        return {"msg": "Password changed successfully"}
+    finally:
+        if close_db:
+            db.close()
+
+# 🔒 Dependency for protected routes
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    """
+    Decodes JWT and returns user information.
+    Raises 401 if token is missing or invalid.
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        invoice_no = payload.get("sub")
+        user_id = payload.get("user_id")
+        
+        if not invoice_no or not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        return {
+            "invoice_no": invoice_no,
+            "user_id": user_id,
+            "name": payload.get("name")
+        }
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+def get_user_devices(user_id: int, db: Session = None) -> list:
+    """Get devices assigned to a user"""
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    else:
+        close_db = False
+    
+    try:
+        from models.device_db import DeviceDB
+        devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
+        return devices
+    finally:
+        if close_db:
+            db.close()
