@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: dashcam-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start.py
+    envVars:
+      - key: DATABASE_URL
+        value: mysql+pymysql://root:DHwoWoogDNQzVkoCJvJPPAmpAQdwdIwy@shortline.proxy.rlwy.net:58339/railway
+      - key: SECRET_KEY
+        value: supersecretkey123!@#$%^&*()dashcam-platform-jwt-secret
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
+      - key: MANUFACTURER_API_BASE_URL
+        value: http://127.0.0.1:9337
+      - key: MANUFACTURER_API_USERNAME
+        value: your_integrator_username
+      - key: MANUFACTURER_API_PASSWORD
+        value: your_integrator_password
+      - key: MANUFACTURER_TOKEN_EXPIRE_HOURS
+        value: 24
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 8000
+      - key: RELOAD
+        value: false
