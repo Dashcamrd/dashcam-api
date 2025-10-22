@@ -4,7 +4,7 @@ from datetime import datetime
 
 class UserCreate(BaseModel):
     invoice_no: str
-    device_id: str
+    device_id: Optional[str] = None
     name: str
     email: Optional[str] = None
     password: str

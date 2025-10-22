@@ -82,7 +82,7 @@ def register_user(user: UserCreate):
             password_hash=hash_password(user.password),
             name=user.name,
             email=user.email,
-            device_id=user.device_id
+            device_id=user.device_id if user.device_id else None
         )
         db.add(db_user)
         db.commit()
