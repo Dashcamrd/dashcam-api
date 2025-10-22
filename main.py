@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, devices, media, gps, alarms, tasks, reports, admin
+from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
@@ -41,6 +41,7 @@ app.include_router(alarms.router)
 app.include_router(tasks.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
+app.include_router(database_info.router)
 
 @app.get("/")
 def root():

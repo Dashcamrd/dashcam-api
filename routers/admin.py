@@ -4,6 +4,7 @@ Admin Router - Handles administrative functions, user management, and system con
 from fastapi import APIRouter, Depends, HTTPException, Query
 from services.auth_service import get_current_user, create_user
 from services.manufacturer_api_service import manufacturer_api
+from services.device_sync_service import sync_devices_from_manufacturer, get_sync_status
 from models.user import UserCreate, UserResponse
 from models.user_db import UserDB
 from models.device_db import DeviceDB
@@ -70,6 +71,34 @@ def create_new_user(
     finally:
         db.close()
 
+@router.post("/devices/sync")
+def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
+    """
+    Sync devices from manufacturer API to local database (admin only).
+    This will fetch all devices from manufacturer and add/update them in local database.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        result = sync_devices_from_manufacturer()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@router.get("/devices/sync/status")
+def get_device_sync_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get current device sync status and counts (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        return get_sync_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
+
 @router.get("/users")
 def list_all_users(
     current_user: dict = Depends(get_current_user),
@@ -114,6 +143,34 @@ def list_all_users(
         }
     finally:
         db.close()
+
+@router.post("/devices/sync")
+def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
+    """
+    Sync devices from manufacturer API to local database (admin only).
+    This will fetch all devices from manufacturer and add/update them in local database.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        result = sync_devices_from_manufacturer()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@router.get("/devices/sync/status")
+def get_device_sync_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get current device sync status and counts (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        return get_sync_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
 
 @router.post("/devices/assign")
 def assign_device_to_user(
@@ -165,6 +222,34 @@ def assign_device_to_user(
     finally:
         db.close()
 
+@router.post("/devices/sync")
+def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
+    """
+    Sync devices from manufacturer API to local database (admin only).
+    This will fetch all devices from manufacturer and add/update them in local database.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        result = sync_devices_from_manufacturer()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@router.get("/devices/sync/status")
+def get_device_sync_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get current device sync status and counts (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        return get_sync_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
+
 @router.get("/devices/unassigned")
 def get_unassigned_devices(current_user: dict = Depends(get_current_user)):
     """
@@ -213,6 +298,34 @@ def get_unassigned_devices(current_user: dict = Depends(get_current_user)):
         }
     finally:
         db.close()
+
+@router.post("/devices/sync")
+def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
+    """
+    Sync devices from manufacturer API to local database (admin only).
+    This will fetch all devices from manufacturer and add/update them in local database.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        result = sync_devices_from_manufacturer()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@router.get("/devices/sync/status")
+def get_device_sync_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get current device sync status and counts (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        return get_sync_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
 
 @router.post("/config/system")
 def manage_system_config(
@@ -404,5 +517,33 @@ def get_admin_dashboard_overview(current_user: dict = Depends(get_current_user))
         }
     finally:
         db.close()
+
+@router.post("/devices/sync")
+def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
+    """
+    Sync devices from manufacturer API to local database (admin only).
+    This will fetch all devices from manufacturer and add/update them in local database.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        result = sync_devices_from_manufacturer()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+@router.get("/devices/sync/status")
+def get_device_sync_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get current device sync status and counts (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        return get_sync_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
 
 
