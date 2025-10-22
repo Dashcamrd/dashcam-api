@@ -43,7 +43,8 @@ class ManufacturerAPIService:
         try:
             login_data = {
                 "username": self.username,
-                "password": self.password
+                "password": self.password,
+                "progVersion": "1.0.0"
             }
             
             response = requests.post(
