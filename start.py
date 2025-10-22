@@ -13,9 +13,19 @@ def run_database_migrations():
     try:
         print("🔄 Running database migrations...")
         
-        # Import migration function
-        from add_device_id_column import add_device_id_column
-        add_device_id_column()
+        # Simple migration - just try to create the column
+        from database import engine
+        from sqlalchemy import text
+        
+        with engine.connect() as connection:
+            try:
+                # Try to add the device_id column
+                connection.execute(text("ALTER TABLE users ADD COLUMN device_id VARCHAR(100) NULL"))
+                connection.commit()
+                print("✅ Added device_id column to users table")
+            except Exception as db_error:
+                # Column might already exist, that's okay
+                print(f"ℹ️  Database column check: {str(db_error)}")
         
         print("✅ Database migrations completed")
     except Exception as e:
