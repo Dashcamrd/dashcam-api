@@ -337,3 +337,5 @@ def send_text_message(
             status_code=400, 
             detail=f"Failed to send text: {result.get('message', 'Unknown error')}"
         )
+
+

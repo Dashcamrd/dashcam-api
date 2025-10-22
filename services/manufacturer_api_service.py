@@ -16,7 +16,7 @@ class ManufacturerAPIService:
     """Service for interacting with the manufacturer's MDVR API"""
     
     def __init__(self):
-        self.base_url = os.getenv("MANUFACTURER_API_BASE_URL", "http://127.0.0.1:9337")
+        self.base_url = os.getenv("MANUFACTURER_API_BASE_URL", "http://180.167.106.70:9337")
         self.username = os.getenv("MANUFACTURER_API_USERNAME")
         self.password = os.getenv("MANUFACTURER_API_PASSWORD")
         self.token = None
@@ -256,3 +256,4 @@ class ManufacturerAPIService:
 
 # Singleton instance
 manufacturer_api = ManufacturerAPIService()
+

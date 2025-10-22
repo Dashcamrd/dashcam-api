@@ -270,3 +270,5 @@ def get_alarms_summary(
         "time_range": f"Last {hours} hours",
         "summary": summary
     }
+
+

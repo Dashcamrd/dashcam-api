@@ -4,6 +4,14 @@ import services.auth_service as auth_service
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+@router.post("/register")
+def register(user: UserCreate):
+    """
+    Register a new user with invoice number, device ID, name, email, and password.
+    Returns a JWT access token if registration is successful.
+    """
+    return auth_service.register_user(user)
+
 @router.post("/login")
 def login(user: UserLogin):
     """

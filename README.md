@@ -280,3 +280,5 @@ pythonProject/
 ## 📝 License
 
 This project is proprietary software for dashcam fleet management.
+
+

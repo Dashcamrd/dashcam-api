@@ -347,3 +347,5 @@ def get_comparative_report(
         "comparison": comparison_data,
         "total_devices_compared": len(device_id_list)
     }
+
+

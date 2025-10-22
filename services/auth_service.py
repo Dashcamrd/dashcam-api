@@ -61,6 +61,54 @@ def create_user(user_data: dict, db: Session = None):
         if close_db:
             db.close()
 
+def register_user(user: UserCreate):
+    """Register a new user with invoice number, device ID, name, email, and password"""
+    db: Session = SessionLocal()
+    try:
+        # Check if invoice number already exists
+        existing_user = db.query(UserDB).filter(UserDB.invoice_no == user.invoice_no).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Invoice number already exists")
+        
+        # Check if email already exists
+        if user.email:
+            existing_email = db.query(UserDB).filter(UserDB.email == user.email).first()
+            if existing_email:
+                raise HTTPException(status_code=400, detail="Email already exists")
+        
+        # Create new user
+        db_user = UserDB(
+            invoice_no=user.invoice_no,
+            password_hash=hash_password(user.password),
+            name=user.name,
+            email=user.email,
+            device_id=user.device_id
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        # Create access token for immediate login
+        token = create_access_token({
+            "sub": db_user.invoice_no,
+            "user_id": db_user.id,
+            "name": db_user.name
+        })
+        
+        return {
+            "access_token": token, 
+            "token_type": "bearer",
+            "user": {
+                "id": db_user.id,
+                "invoice_no": db_user.invoice_no,
+                "name": db_user.name,
+                "email": db_user.email,
+                "device_id": db_user.device_id
+            }
+        }
+    finally:
+        db.close()
+
 def login_user(user: UserLogin):
     """Login with invoice number and password"""
     db: Session = SessionLocal()

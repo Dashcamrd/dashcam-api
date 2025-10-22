@@ -7,6 +7,7 @@ class UserDB(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     invoice_no = Column(String(100), unique=True, index=True, nullable=False)
+    device_id = Column(String(100), nullable=True)
     password_hash = Column(String(200), nullable=False)
     name = Column(String(200), nullable=False)
     email = Column(String(200), nullable=True)

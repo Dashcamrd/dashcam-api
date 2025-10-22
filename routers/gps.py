@@ -191,3 +191,5 @@ def get_user_devices_with_gps_status(
         "devices": devices_with_gps,
         "total_devices": len(devices_with_gps)
     }
+
+

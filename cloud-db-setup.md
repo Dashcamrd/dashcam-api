@@ -68,3 +68,5 @@ mysql -h cloud-host -u username -p database_name < backup.sql
 
 3. Update application to use cloud database
 4. Test connection
+
+

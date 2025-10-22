@@ -70,3 +70,5 @@ def create_initial_data():
 if __name__ == "__main__":
     print("🚀 Setting up initial data for Dashcam Management Platform...")
     create_initial_data()
+
+
