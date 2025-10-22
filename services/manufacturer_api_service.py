@@ -42,7 +42,7 @@ class ManufacturerAPIService:
         """Refresh authentication token"""
         try:
             login_data = {
-                "account": self.username,
+                "username": self.username,
                 "password": self.password
             }
             
