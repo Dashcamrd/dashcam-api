@@ -26,7 +26,12 @@ class ManufacturerAPIService:
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with authentication token"""
         if not self.token or self._is_token_expired():
-            self._refresh_token()
+            logger.info("🔄 Token expired or missing, refreshing token...")
+            refresh_success = self._refresh_token()
+            if not refresh_success:
+                logger.error("❌ Failed to refresh token!")
+                raise Exception("Failed to refresh manufacturer API token")
+            logger.info("✅ Token refreshed successfully")
         
         return {
             "Content-Type": "application/json",
@@ -151,7 +156,7 @@ class ManufacturerAPIService:
     # Device endpoints
     def get_user_device_list(self) -> Dict[str, Any]:
         """Get list of devices for the user"""
-        return self._make_request("/api/v1/device/getList", {"page": 1, "pageSize": 1000})
+        return self._make_request("/api/v1/device/getList", {"page": 1, "pageSize": 10})
     
     def get_device_status_list(self) -> Dict[str, Any]:
         """Get device status list"""
