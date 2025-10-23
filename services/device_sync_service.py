@@ -21,20 +21,47 @@ def sync_devices_from_manufacturer():
     try:
         logger.info("🔄 Starting device sync from manufacturer API...")
         
-        # Get all devices from manufacturer API
-        result = manufacturer_api.get_user_device_list()
-        logger.info(f"🔍 Manufacturer API device list response: {result}")
+        # Call manufacturer API directly (bypassing our service)
+        import requests
         
-        if result.get("code") != 0:
-            logger.error(f"❌ Failed to get device list: {result.get('message', 'Unknown error')}")
+        # Use fresh token from direct curl test
+        fresh_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJCYXNlQ2xhaW1zIjp7IklkIjoyODQsIlV1aWQiOiIxM2QzMTAzMC1mMGM1LTQ2OTUtYTllZC0yN2ZlZmIyNTkxNWEiLCJVc2VybmFtZSI6Im1vbm8xIiwiQ29tcGFueUlkIjo0MzcsIkNvbXBhbnkiOiLmspnnibnpmL_mi4nkvK9EQVMiLCJSb2xlSWQiOjI1LCJFeHBpcmF0aW9uIjowfSwiQnVmZmVyVGltZSI6MCwiaXNzIjoidGwiLCJhdWQiOlsidGwiXSwibmJmIjoxNzYxMjMzMzc5fQ.WrKJBJKQweA5dFk4jr4xbGtQQyVXFzlj5-FtcWCOUls"
+        
+        logger.info("🔄 Calling manufacturer API directly...")
+        
+        # Make direct request to manufacturer API
+        response = requests.post(
+            "http://180.167.106.70:9337/api/v1/device/getList",
+            headers={
+                "Content-Type": "application/json",
+                "X-Token": fresh_token
+            },
+            json={"page": 1, "pageSize": 10},
+            timeout=30
+        )
+        
+        logger.info(f"📡 Manufacturer API response status: {response.status_code}")
+        logger.info(f"📡 Manufacturer API response: {response.text}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"✅ Got device data: {result}")
+            
+            if result.get("code") == 200:
+                manufacturer_devices = result.get("data", {}).get("list", [])
+                logger.info(f"📱 Found {len(manufacturer_devices)} devices from manufacturer")
+            else:
+                logger.error(f"❌ Manufacturer API error: {result.get('message')}")
+                return {
+                    "success": False,
+                    "error": f"Manufacturer API error: {result.get('message')}"
+                }
+        else:
+            logger.error(f"❌ Manufacturer API request failed: {response.status_code}")
             return {
                 "success": False,
-                "error": f"Manufacturer API error: {result.get('message', 'Unknown error')}"
+                "error": f"Manufacturer API request failed: {response.status_code}"
             }
-        
-        manufacturer_devices = result.get("data", {}).get("devices", [])
-        logger.info(f"📱 Found {len(manufacturer_devices)} devices from manufacturer")
-        logger.info(f"📱 Device data structure: {manufacturer_devices}")
         
         # Get existing devices from local database
         existing_devices = db.query(DeviceDB).all()
