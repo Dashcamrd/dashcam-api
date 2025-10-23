@@ -21,15 +21,15 @@ class ManufacturerAPIService:
         self.username = os.getenv("MANUFACTURER_API_USERNAME")
         self.password = os.getenv("MANUFACTURER_API_PASSWORD")
         
-        # TEMPORARY: Use fresh token from direct curl test
-        self.token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJCYXNlQ2xhaW1zIjp7IklkIjoyODQsIlV1aWQiOiIxM2QzMTAzMC1mMGM1LTQ2OTUtYTllZC0yN2ZlZmIyNTkxNWEiLCJVc2VybmFtZSI6Im1vbm8xIiwiQ29tcGFueUlkIjo0MzcsIkNvbXBhbnkiOiLmspnnibnpmL_mi4nkvK9EQVMiLCJSb2xlSWQiOjI1LCJFeHBpcmF0aW9uIjowfSwiQnVmZmVyVGltZSI6MCwiaXNzIjoidGwiLCJhdWQiOlsidGwiXSwibmJmIjoxNzYxMjMzMzc5fQ.WrKJBJKQweA5dFk4jr4xbGtQQyVXFzlj5-FtcWCOUls"
+        # Token management - start with no token, will be fetched on first use
+        self.token = None
         self.token_expires_at = None
         
         logger.info(f"🔧 Manufacturer API Config:")
         logger.info(f"   Base URL: {self.base_url}")
         logger.info(f"   Username: {self.username}")
         logger.info(f"   Password: {'***' if self.password else 'NOT_SET'}")
-        logger.info(f"   Using FRESH token: {self.token[:20]}...")
+        logger.info(f"   Token: Will be fetched automatically on first use")
         
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with authentication token"""
@@ -55,6 +55,10 @@ class ManufacturerAPIService:
     def _refresh_token(self) -> bool:
         """Refresh authentication token"""
         try:
+            if not self.username or not self.password:
+                logger.error("❌ Manufacturer API credentials not configured")
+                return False
+                
             # Hash password with MD5 as required by manufacturer API
             password_hash = hashlib.md5(self.password.encode()).hexdigest()
             
@@ -65,15 +69,19 @@ class ManufacturerAPIService:
                 "platform": 3
             }
             
+            logger.info(f"🔄 Attempting to login to manufacturer API with username: {self.username}")
+            
             response = requests.post(
                 f"{self.base_url}/api/v1/user/login",
                 json=login_data,
                 timeout=30
             )
             
+            logger.info(f"📡 Login response status: {response.status_code}")
+            logger.info(f"📡 Login response: {response.text[:200]}...")
+            
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"Manufacturer API login response: {result}")
                 
                 # Check different possible success indicators
                 if (result.get("code") == 0 or 
@@ -91,50 +99,72 @@ class ManufacturerAPIService:
                         self.token = token
                         # Set token to expire in 23 hours (1 hour before actual expiry)
                         self.token_expires_at = datetime.now() + timedelta(hours=23)
-                        logger.info(f"Successfully refreshed manufacturer API token: {self.token[:20]}...")
+                        logger.info(f"✅ Successfully refreshed manufacturer API token: {self.token[:20]}...")
+                        logger.info(f"⏰ Token expires at: {self.token_expires_at}")
                         return True
                     else:
-                        logger.error(f"Login successful but no token found in response: {result}")
+                        logger.error(f"❌ Login successful but no token found in response: {result}")
                         return False
                 else:
-                    logger.error(f"Login failed: {result.get('message', 'Unknown error')}")
+                    logger.error(f"❌ Login failed: {result.get('message', 'Unknown error')}")
                     return False
             else:
-                logger.error(f"Login request failed with status {response.status_code}")
+                logger.error(f"❌ Login request failed with status {response.status_code}: {response.text}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error refreshing token: {str(e)}")
+            logger.error(f"❌ Error refreshing token: {str(e)}")
             return False
+    
+    def _ensure_valid_token(self) -> bool:
+        """Ensure we have a valid token, refresh if needed"""
+        if not self.token or self._is_token_expired():
+            logger.info("🔄 No valid token found, attempting to refresh...")
+            return self._refresh_token()
+        return True
     
     def _make_request(self, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
         """Make authenticated request to manufacturer API"""
         try:
+            # Ensure we have a valid token before making the request
+            if not self._ensure_valid_token():
+                logger.error("❌ Failed to get valid token for API request")
+                return {"code": -1, "message": "Authentication failed - unable to get valid token"}
+            
             headers = self._get_headers()
             url = f"{self.base_url}{endpoint}"
             
-            logger.info(f"Making request to {url} with token: {headers.get('X-Token', 'NO_TOKEN')[:20]}...")
-            logger.info(f"Request data: {data}")
+            logger.info(f"📡 Making request to {url}")
+            logger.info(f"📡 Request data: {data}")
             
             response = requests.post(url, json=data or {}, headers=headers, timeout=30)
             
-            logger.info(f"Response status: {response.status_code}")
-            logger.info(f"Response text: {response.text[:200]}...")
+            logger.info(f"📡 Response status: {response.status_code}")
+            logger.info(f"📡 Response text: {response.text[:200]}...")
             
             if response.status_code == 200:
-                logger.info(f"Raw response text: {response.text}")
-                logger.info(f"Response headers: {dict(response.headers)}")
-                
                 try:
                     # Try to parse as JSON first
                     json_response = response.json()
-                    logger.info(f"Successfully parsed JSON response: {json_response}")
+                    logger.info(f"✅ Successfully parsed JSON response")
+                    
+                    # Check if token is invalid/expired
+                    if json_response.get("code") == 1008:  # Invalid token error
+                        logger.warning("⚠️ Token expired during request, refreshing and retrying...")
+                        self.token = None  # Force token refresh
+                        if self._ensure_valid_token():
+                            # Retry the request with new token
+                            headers = self._get_headers()
+                            response = requests.post(url, json=data or {}, headers=headers, timeout=30)
+                            if response.status_code == 200:
+                                return response.json()
+                    
                     return json_response
                 except ValueError as e:
                     # If not JSON, treat as plain text response
                     text_response = response.text.strip()
-                    logger.info(f"JSON parsing failed: {e}")
-                    logger.info(f"Non-JSON response received: {text_response}")
+                    logger.info(f"⚠️ JSON parsing failed: {e}")
+                    logger.info(f"📄 Non-JSON response received: {text_response}")
                     
                     # Handle different text responses
                     if text_response == "success":
@@ -144,11 +174,11 @@ class ManufacturerAPIService:
                     else:
                         return {"code": 0, "message": text_response, "data": {}}
             else:
-                logger.error(f"API request failed: {response.status_code} - {response.text}")
+                logger.error(f"❌ API request failed: {response.status_code} - {response.text}")
                 return {"code": -1, "message": f"Request failed with status {response.status_code}"}
-                
+            
         except Exception as e:
-            logger.error(f"Error making API request to {endpoint}: {str(e)}")
+            logger.error(f"❌ Error making API request to {endpoint}: {str(e)}")
             return {"code": -1, "message": f"Request error: {str(e)}"}
     
     # Auth endpoints
@@ -185,7 +215,15 @@ class ManufacturerAPIService:
     
     def get_latest_gps(self, device_data: Dict) -> Dict[str, Any]:
         """Get latest GPS information"""
-        return self._make_request("/api/v1/gps/getLatestGpsV2", device_data)
+        # Use the working GPS search endpoint with a recent time range
+        import time
+        current_time = int(time.time())
+        search_data = {
+            "deviceId": device_data.get("deviceId"),
+            "startTime": current_time - 86400,  # Last 24 hours
+            "endTime": current_time
+        }
+        return self._make_request("/api/v1/gps/search", search_data)
     
     # Media endpoints
     def open_preview(self, preview_data: Dict) -> Dict[str, Any]:

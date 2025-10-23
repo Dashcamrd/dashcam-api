@@ -571,6 +571,7 @@ def reset_user_password(
         # Hash the new password
         from services.auth_service import hash_password
         user.password_hash = hash_password(new_password)
+        db.add(user)  # Add the user back to the session
         db.commit()
         db.close()
         
@@ -607,6 +608,7 @@ def reset_password_by_invoice(
         # Hash the new password
         from services.auth_service import hash_password
         user.password_hash = hash_password(new_password)
+        db.add(user)  # Add the user back to the session
         db.commit()
         db.close()
         

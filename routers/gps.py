@@ -43,19 +43,30 @@ def get_latest_gps(
     device_data = {"deviceId": device_id}
     result = manufacturer_api.get_latest_gps(device_data)
     
-    if result.get("code") == 0:
-        gps_data = result.get("data", {})
-        return {
-            "success": True,
-            "device_id": device_id,
-            "gps_data": gps_data,
-            "timestamp": gps_data.get("timestamp"),
-            "latitude": gps_data.get("latitude"),
-            "longitude": gps_data.get("longitude"),
-            "speed": gps_data.get("speed"),
-            "direction": gps_data.get("direction"),
-            "address": gps_data.get("address")
-        }
+    if result.get("code") == 200:  # Manufacturer API returns 200 for success
+        data = result.get("data", {})
+        gps_info = data.get("gpsInfo", [])
+        
+        if gps_info:
+            # Get the latest GPS entry (first one in the array)
+            latest_gps = gps_info[0]
+            return {
+                "success": True,
+                "device_id": device_id,
+                "latitude": latest_gps.get("latitude"),
+                "longitude": latest_gps.get("longitude"),
+                "speed": latest_gps.get("speed"),
+                "direction": latest_gps.get("direction"),
+                "height": latest_gps.get("height"),
+                "timestamp": latest_gps.get("time"),
+                "address": None  # Not provided by manufacturer API
+            }
+        else:
+            return {
+                "success": False,
+                "device_id": device_id,
+                "message": "No GPS data found for this device"
+            }
     else:
         raise HTTPException(
             status_code=400, 
