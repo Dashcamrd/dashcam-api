@@ -109,13 +109,18 @@ class ManufacturerAPIService:
             logger.info(f"Response text: {response.text[:200]}...")
             
             if response.status_code == 200:
+                logger.info(f"Raw response text: {response.text}")
+                logger.info(f"Response headers: {dict(response.headers)}")
+                
                 try:
                     # Try to parse as JSON first
                     json_response = response.json()
+                    logger.info(f"Successfully parsed JSON response: {json_response}")
                     return json_response
-                except ValueError:
+                except ValueError as e:
                     # If not JSON, treat as plain text response
                     text_response = response.text.strip()
+                    logger.info(f"JSON parsing failed: {e}")
                     logger.info(f"Non-JSON response received: {text_response}")
                     
                     # Handle different text responses
