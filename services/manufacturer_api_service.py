@@ -20,8 +20,16 @@ class ManufacturerAPIService:
         self.base_url = os.getenv("MANUFACTURER_API_BASE_URL", "http://180.167.106.70:9337")
         self.username = os.getenv("MANUFACTURER_API_USERNAME")
         self.password = os.getenv("MANUFACTURER_API_PASSWORD")
-        self.token = None
+        
+        # TEMPORARY: Use fresh token from direct curl test
+        self.token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJCYXNlQ2xhaW1zIjp7IklkIjoyODQsIlV1aWQiOiIxM2QzMTAzMC1mMGM1LTQ2OTUtYTllZC0yN2ZlZmIyNTkxNWEiLCJVc2VybmFtZSI6Im1vbm8xIiwiQ29tcGFueUlkIjo0MzcsIkNvbXBhbnkiOiLmspnnibnpmL_mi4nkvK9EQVMiLCJSb2xlSWQiOjI1LCJFeHBpcmF0aW9uIjowfSwiQnVmZmVyVGltZSI6MCwiaXNzIjoidGwiLCJhdWQiOlsidGwiXSwibmJmIjoxNzYxMjMzMzc5fQ.WrKJBJKQweA5dFk4jr4xbGtQQyVXFzlj5-FtcWCOUls"
         self.token_expires_at = None
+        
+        logger.info(f"🔧 Manufacturer API Config:")
+        logger.info(f"   Base URL: {self.base_url}")
+        logger.info(f"   Username: {self.username}")
+        logger.info(f"   Password: {'***' if self.password else 'NOT_SET'}")
+        logger.info(f"   Using FRESH token: {self.token[:20]}...")
         
     def _get_headers(self) -> Dict[str, str]:
         """Get headers with authentication token"""
