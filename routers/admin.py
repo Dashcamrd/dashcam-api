@@ -547,3 +547,76 @@ def get_device_sync_status(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
 
 
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    new_password: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reset a user password by user ID (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = SessionLocal()
+        user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Hash the new password
+        from services.auth_service import hash_password
+        user.password_hash = hash_password(new_password)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Password reset successfully for user {user.name}",
+            "user_id": user_id,
+            "invoice_no": user.invoice_no
+        }
+    except Exception as e:
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
+@router.post("/users/reset-password-by-invoice")
+def reset_password_by_invoice(
+    invoice_no: str,
+    new_password: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reset password by invoice number (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = SessionLocal()
+        user = db.query(UserDB).filter(UserDB.invoice_no == invoice_no).first()
+        
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Hash the new password
+        from services.auth_service import hash_password
+        user.password_hash = hash_password(new_password)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Password reset successfully for user {user.name}",
+            "user_id": user.id,
+            "invoice_no": user.invoice_no
+        }
+    except Exception as e:
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
