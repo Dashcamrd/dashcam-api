@@ -48,7 +48,8 @@ class ManufacturerAPIService:
             login_data = {
                 "username": self.username,
                 "password": password_hash,
-                "progVersion": "1.0.0"
+                "progVersion": "0.0.1",
+                "platform": 3
             }
             
             response = requests.post(
@@ -108,7 +109,22 @@ class ManufacturerAPIService:
             logger.info(f"Response text: {response.text[:200]}...")
             
             if response.status_code == 200:
-                return response.json()
+                try:
+                    # Try to parse as JSON first
+                    json_response = response.json()
+                    return json_response
+                except ValueError:
+                    # If not JSON, treat as plain text response
+                    text_response = response.text.strip()
+                    logger.info(f"Non-JSON response received: {text_response}")
+                    
+                    # Handle different text responses
+                    if text_response == "success":
+                        return {"code": 0, "message": "success", "data": {}}
+                    elif "error" in text_response.lower():
+                        return {"code": -1, "message": text_response}
+                    else:
+                        return {"code": 0, "message": text_response, "data": {}}
             else:
                 logger.error(f"API request failed: {response.status_code} - {response.text}")
                 return {"code": -1, "message": f"Request failed with status {response.status_code}"}
