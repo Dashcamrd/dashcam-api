@@ -103,7 +103,7 @@ class ManufacturerAPIService:
     # Device endpoints
     def get_user_device_list(self) -> Dict[str, Any]:
         """Get list of devices for the user"""
-        return self._make_request("/api/v1/device/getUserDeviceList")
+        return self._make_request("/api/v1/device/getList", {"page": 1, "pageSize": 1000})
     
     def get_device_status_list(self) -> Dict[str, Any]:
         """Get device status list"""
