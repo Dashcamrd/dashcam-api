@@ -23,6 +23,7 @@ def sync_devices_from_manufacturer():
         
         # Get all devices from manufacturer API
         result = manufacturer_api.get_user_device_list()
+        logger.info(f"🔍 Manufacturer API device list response: {result}")
         
         if result.get("code") != 0:
             logger.error(f"❌ Failed to get device list: {result.get('message', 'Unknown error')}")
@@ -33,6 +34,7 @@ def sync_devices_from_manufacturer():
         
         manufacturer_devices = result.get("data", {}).get("devices", [])
         logger.info(f"📱 Found {len(manufacturer_devices)} devices from manufacturer")
+        logger.info(f"📱 Device data structure: {manufacturer_devices}")
         
         # Get existing devices from local database
         existing_devices = db.query(DeviceDB).all()
