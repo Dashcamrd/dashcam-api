@@ -55,11 +55,12 @@ class ManufacturerAPIService:
             
             if response.status_code == 200:
                 result = response.json()
+                logger.info(f"Manufacturer API login response: {result}")
                 if result.get("code") == 0:  # Success
                     self.token = result.get("data", {}).get("token")
                     # Set token to expire in 23 hours (1 hour before actual expiry)
                     self.token_expires_at = datetime.now() + timedelta(hours=23)
-                    logger.info("Successfully refreshed manufacturer API token")
+                    logger.info(f"Successfully refreshed manufacturer API token: {self.token[:20]}...")
                     return True
                 else:
                     logger.error(f"Login failed: {result.get('message')}")
@@ -78,7 +79,13 @@ class ManufacturerAPIService:
             headers = self._get_headers()
             url = f"{self.base_url}{endpoint}"
             
+            logger.info(f"Making request to {url} with token: {headers.get('X-Token', 'NO_TOKEN')[:20]}...")
+            logger.info(f"Request data: {data}")
+            
             response = requests.post(url, json=data or {}, headers=headers, timeout=30)
+            
+            logger.info(f"Response status: {response.status_code}")
+            logger.info(f"Response text: {response.text[:200]}...")
             
             if response.status_code == 200:
                 return response.json()
