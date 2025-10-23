@@ -3,6 +3,7 @@ Manufacturer API Service - Handles all communication with the MDVR platform API
 """
 import requests
 import os
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
@@ -41,9 +42,12 @@ class ManufacturerAPIService:
     def _refresh_token(self) -> bool:
         """Refresh authentication token"""
         try:
+            # Hash password with MD5 as required by manufacturer API
+            password_hash = hashlib.md5(self.password.encode()).hexdigest()
+            
             login_data = {
                 "username": self.username,
-                "password": self.password,
+                "password": password_hash,
                 "progVersion": "1.0.0"
             }
             
