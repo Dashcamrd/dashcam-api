@@ -63,6 +63,22 @@ def sync_devices_from_manufacturer():
                 "error": f"Manufacturer API request failed: {response.status_code}"
             }
         
+        # Get admin user ID (find admin user by invoice_no starting with "ADMIN")
+        admin_user = db.query(UserDB).filter(UserDB.invoice_no.like("ADMIN%")).first()
+        if not admin_user:
+            # If no admin user found, use the first user
+            admin_user = db.query(UserDB).first()
+        
+        if not admin_user:
+            logger.error("❌ No admin user found in database")
+            return {
+                "success": False,
+                "error": "No admin user found in database"
+            }
+        
+        admin_user_id = admin_user.id
+        logger.info(f"👤 Assigning all devices to admin user ID: {admin_user_id} ({admin_user.name})")
+        
         # Get existing devices from local database
         existing_devices = db.query(DeviceDB).all()
         existing_device_ids = {device.device_id for device in existing_devices}
@@ -85,18 +101,21 @@ def sync_devices_from_manufacturer():
                     existing_device.name = device_name
                     existing_device.org_id = org_id
                     existing_device.status = status
+                    existing_device.assigned_user_id = admin_user_id  # Assign to admin
                     updated_devices.append(device_id)
+                    logger.info(f"⬆️ Updated device: {device_id} (assigned to admin)")
             else:
-                # Create new device (unassigned)
+                # Create new device (assigned to admin)
                 new_device = DeviceDB(
                     device_id=device_id,
                     name=device_name,
-                    assigned_user_id=None,  # Unassigned initially
+                    assigned_user_id=admin_user_id,  # Assign to admin
                     org_id=org_id,
                     status=status
                 )
                 db.add(new_device)
                 new_devices.append(device_id)
+                logger.info(f"➕ Added new device: {device_id} (assigned to admin)")
         
         # Commit all changes
         db.commit()

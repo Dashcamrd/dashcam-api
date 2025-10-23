@@ -8,7 +8,7 @@ class DeviceDB(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     device_id = Column(String(100), unique=True, index=True, nullable=False)  # from manufacturer
     name = Column(String(200), nullable=False)
-    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    assigned_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     org_id = Column(String(100), nullable=False)  # from manufacturer
     status = Column(String(50), default="offline")  # online/offline
     brand = Column(String(100), nullable=True)
