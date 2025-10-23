@@ -5,6 +5,7 @@ Automatically syncs devices from manufacturer API to local database
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models.device_db import DeviceDB
+from models.user_db import UserDB
 from services.manufacturer_api_service import ManufacturerAPIService
 import logging
 
