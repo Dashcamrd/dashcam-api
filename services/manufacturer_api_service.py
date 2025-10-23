@@ -60,14 +60,30 @@ class ManufacturerAPIService:
             if response.status_code == 200:
                 result = response.json()
                 logger.info(f"Manufacturer API login response: {result}")
-                if result.get("code") == 0:  # Success
-                    self.token = result.get("data", {}).get("token")
-                    # Set token to expire in 23 hours (1 hour before actual expiry)
-                    self.token_expires_at = datetime.now() + timedelta(hours=23)
-                    logger.info(f"Successfully refreshed manufacturer API token: {self.token[:20]}...")
-                    return True
+                
+                # Check different possible success indicators
+                if (result.get("code") == 0 or 
+                    result.get("success") == True or 
+                    result.get("message") == "success" or
+                    "token" in str(result)):
+                    
+                    # Try different token locations
+                    token = (result.get("data", {}).get("token") or 
+                            result.get("token") or 
+                            result.get("data", {}).get("accessToken") or
+                            result.get("accessToken"))
+                    
+                    if token:
+                        self.token = token
+                        # Set token to expire in 23 hours (1 hour before actual expiry)
+                        self.token_expires_at = datetime.now() + timedelta(hours=23)
+                        logger.info(f"Successfully refreshed manufacturer API token: {self.token[:20]}...")
+                        return True
+                    else:
+                        logger.error(f"Login successful but no token found in response: {result}")
+                        return False
                 else:
-                    logger.error(f"Login failed: {result.get('message')}")
+                    logger.error(f"Login failed: {result.get('message', 'Unknown error')}")
                     return False
             else:
                 logger.error(f"Login request failed with status {response.status_code}")
