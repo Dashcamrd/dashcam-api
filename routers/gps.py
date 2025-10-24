@@ -203,4 +203,45 @@ def get_user_devices_with_gps_status(
         "total_devices": len(devices_with_gps)
     }
 
+@router.get("/states/{device_id}")
+def get_device_states(
+    device_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get device states including ACC status.
+    Only devices assigned to the current user are accessible.
+    """
+    # Verify user has access to this device
+    if not verify_device_access(device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    # Call manufacturer API
+    device_data = {"deviceId": device_id}
+    result = manufacturer_api.get_device_states(device_data)
+    
+    if result.get("code") == 200:  # Manufacturer API returns 200 for success
+        data = result.get("data", {})
+        device_list = data.get("list", [])
+        
+        if device_list and len(device_list) > 0:
+            device_data = device_list[0]  # Get first device
+            acc_state = device_data.get("accState", 0)  # 0 = OFF, 1 = ON
+            
+            return {
+                "success": True,
+                "acc_status": acc_state == 1,  # Convert to boolean
+                "acc_state": acc_state,
+                "raw_data": device_data
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No device data found",
+                "acc_status": False,
+                "acc_state": 0
+            }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to fetch device states")
+
 

@@ -123,7 +123,7 @@ class ManufacturerAPIService:
             return self._refresh_token()
         return True
     
-    def _make_request(self, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+    def _make_request(self, endpoint: str, data: Optional[Dict] = None, method: str = "POST") -> Dict[str, Any]:
         """Make authenticated request to manufacturer API"""
         try:
             # Ensure we have a valid token before making the request
@@ -137,7 +137,10 @@ class ManufacturerAPIService:
             logger.info(f"📡 Making request to {url}")
             logger.info(f"📡 Request data: {data}")
             
-            response = requests.post(url, json=data or {}, headers=headers, timeout=30)
+            if method.upper() == "GET":
+                response = requests.get(url, params=data or {}, headers=headers, timeout=30)
+            else:
+                response = requests.post(url, json=data or {}, headers=headers, timeout=30)
             
             logger.info(f"📡 Response status: {response.status_code}")
             logger.info(f"📡 Response text: {response.text[:200]}...")
@@ -155,7 +158,10 @@ class ManufacturerAPIService:
                         if self._ensure_valid_token():
                             # Retry the request with new token
                             headers = self._get_headers()
-                            response = requests.post(url, json=data or {}, headers=headers, timeout=30)
+                            if method.upper() == "GET":
+                                response = requests.get(url, params=data or {}, headers=headers, timeout=30)
+                            else:
+                                response = requests.post(url, json=data or {}, headers=headers, timeout=30)
                             if response.status_code == 200:
                                 return response.json()
                     
@@ -224,6 +230,14 @@ class ManufacturerAPIService:
             "endTime": current_time
         }
         return self._make_request("/api/v1/gps/search", search_data)
+    
+    def get_device_states(self, device_data: Dict) -> Dict[str, Any]:
+        """Get device states including ACC status"""
+        # Format request as POST with deviceIds array
+        request_data = {
+            "deviceIds": [device_data.get("deviceId")]
+        }
+        return self._make_request("/api/v1/device/states", request_data, method="POST")
     
     # Media endpoints
     def open_preview(self, preview_data: Dict) -> Dict[str, Any]:
