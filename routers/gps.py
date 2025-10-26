@@ -11,6 +11,35 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _get_relative_time_from_timestamp(timestamp_seconds: int) -> str:
+    """Convert Unix timestamp to relative time format like 'X minutes ago'"""
+    if not timestamp_seconds:
+        return "Unknown"
+    
+    try:
+        # Convert Unix timestamp to datetime
+        timestamp = datetime.fromtimestamp(timestamp_seconds)
+        now = datetime.now()
+        diff = now - timestamp
+        
+        # Calculate time difference
+        total_seconds = int(diff.total_seconds())
+        
+        if total_seconds < 60:
+            return "Just now"
+        elif total_seconds < 3600:  # Less than 1 hour
+            minutes = total_seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif total_seconds < 86400:  # Less than 1 day
+            hours = total_seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        else:  # More than 1 day
+            days = total_seconds // 86400
+            return f"{days} day{'s' if days != 1 else ''} ago"
+    except Exception as e:
+        logger.error(f"Error parsing timestamp '{timestamp_seconds}': {e}")
+        return "Unknown"
+
 def _get_relative_time(timestamp_str: str) -> str:
     """Convert timestamp string to relative time format like 'X minutes ago'"""
     if not timestamp_str:
@@ -203,17 +232,32 @@ def get_user_devices_with_gps_status(
     for device in user_devices:
         try:
             device_data = {"deviceId": device.device_id}
-            gps_result = manufacturer_api.get_latest_gps(device_data)
+            
+            # Try v2 API first for lastOnlineTime, fallback to v1 if needed
+            gps_result = manufacturer_api.get_latest_gps_v2(device_data)
+            
+            # If v2 fails, fallback to v1
+            if gps_result.get("code") != 200:
+                gps_result = manufacturer_api.get_latest_gps(device_data)
             
             gps_status = "online" if gps_result.get("code") == 200 else "offline"
             
             # Parse GPS data from manufacturer API response
             gps_data = {}
+            last_online_time = None
+            
             if gps_result.get("code") == 200:
                 data = gps_result.get("data", {})
-                gps_info = data.get("gpsInfo", [])
-                if gps_info:
-                    gps_data = gps_info[0]  # Get the latest GPS entry
+                
+                # Check if this is v2 response with lastOnlineTime
+                if "lastOnlineTime" in data:
+                    last_online_time = data.get("lastOnlineTime")
+                    gps_data = data  # v2 response structure might be different
+                else:
+                    # v1 response structure
+                    gps_info = data.get("gpsInfo", [])
+                    if gps_info:
+                        gps_data = gps_info[0]  # Get the latest GPS entry
             
             # Convert raw coordinates to decimal degrees (same as map page)
             latitude = None
@@ -249,7 +293,7 @@ def get_user_devices_with_gps_status(
                     "timestamp": gps_data.get("time") if gps_data else None,
                     "address": gps_data.get("address") if gps_data else None
                 },
-                "last_update": _get_relative_time(gps_data.get("time")) if gps_data else "Unknown"
+                "last_update": _get_relative_time_from_timestamp(last_online_time) if last_online_time else _get_relative_time(gps_data.get("time")) if gps_data else "Unknown"
             })
         except Exception as e:
             # If GPS fetch fails for a device, still include it with offline status

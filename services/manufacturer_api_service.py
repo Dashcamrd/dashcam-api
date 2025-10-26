@@ -231,6 +231,15 @@ class ManufacturerAPIService:
         }
         return self._make_request("/api/v1/gps/search", search_data)
     
+    def get_latest_gps_v2(self, device_data: Dict) -> Dict[str, Any]:
+        """Get latest GPS information with lastOnlineTime parameter"""
+        # Use the v2 endpoint that includes lastOnlineTime
+        request_data = {
+            "deviceId": device_data.get("deviceId"),
+            "lastOnlineTime": True  # Request last online timestamp
+        }
+        return self._make_request("/api/v2/gps/getLatestGPS", request_data)
+    
     def get_device_states(self, device_data: Dict) -> Dict[str, Any]:
         """Get device states including ACC status"""
         # Format request as POST with deviceIds array
