@@ -206,9 +206,9 @@ def get_user_devices_with_gps_status(
                     "latitude": latitude,
                     "longitude": longitude,
                     "location_name": location_name,
-                    "timestamp": gps_data.get("timestamp"),
-                    "address": gps_data.get("address")
-                } if gps_data else None,
+                    "timestamp": gps_data.get("timestamp") if gps_data else None,
+                    "address": gps_data.get("address") if gps_data else None
+                },
                 "last_update": gps_data.get("timestamp", "Unknown") if gps_data else "Unknown"
             })
         except Exception as e:
@@ -218,7 +218,14 @@ def get_user_devices_with_gps_status(
                 "name": device.name,
                 "status": device.status,
                 "gps_status": "offline",
-                "last_location": None
+                "last_location": {
+                    "latitude": None,
+                    "longitude": None,
+                    "location_name": "Location unavailable",
+                    "timestamp": None,
+                    "address": None
+                },
+                "last_update": "Unknown"
             })
     
     return {
