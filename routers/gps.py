@@ -175,17 +175,41 @@ def get_user_devices_with_gps_status(
             gps_status = "online" if gps_result.get("code") == 0 else "offline"
             gps_data = gps_result.get("data", {}) if gps_result.get("code") == 0 else {}
             
+            # Convert raw coordinates to decimal degrees (same as map page)
+            latitude = None
+            longitude = None
+            location_name = "Location unavailable"
+            
+            if gps_data:
+                lat_raw = gps_data.get("latitude")
+                lng_raw = gps_data.get("longitude")
+                
+                if lat_raw and lng_raw:
+                    # Convert from raw integer format to decimal degrees
+                    latitude = lat_raw / 1000000.0
+                    longitude = lng_raw / 1000000.0
+                    
+                    # Generate human-readable location name (same logic as map page)
+                    if latitude and longitude:
+                        # Simple location mapping based on coordinates
+                        if 5.2 <= latitude <= 5.4 and 100.2 <= longitude <= 100.4:
+                            location_name = "Batu Maung, Malaysia"
+                        else:
+                            location_name = f"{latitude:.6f}, {longitude:.6f}"
+            
             devices_with_gps.append({
                 "device_id": device.device_id,
                 "name": device.name,
                 "status": device.status,
                 "gps_status": gps_status,
                 "last_location": {
-                    "latitude": gps_data.get("latitude"),
-                    "longitude": gps_data.get("longitude"),
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "location_name": location_name,
                     "timestamp": gps_data.get("timestamp"),
                     "address": gps_data.get("address")
-                } if gps_data else None
+                } if gps_data else None,
+                "last_update": gps_data.get("timestamp", "Unknown") if gps_data else "Unknown"
             })
         except Exception as e:
             # If GPS fetch fails for a device, still include it with offline status
