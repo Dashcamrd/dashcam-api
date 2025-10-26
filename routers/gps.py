@@ -6,6 +6,39 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _get_relative_time(timestamp_str: str) -> str:
+    """Convert timestamp string to relative time format like 'X minutes ago'"""
+    if not timestamp_str:
+        return "Unknown"
+    
+    try:
+        # Parse the timestamp string (format: "2025-10-26 11:20:39")
+        timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        diff = now - timestamp
+        
+        # Calculate time difference
+        total_seconds = int(diff.total_seconds())
+        
+        if total_seconds < 60:
+            return "Just now"
+        elif total_seconds < 3600:  # Less than 1 hour
+            minutes = total_seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif total_seconds < 86400:  # Less than 1 day
+            hours = total_seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        else:  # More than 1 day
+            days = total_seconds // 86400
+            return f"{days} day{'s' if days != 1 else ''} ago"
+    except Exception as e:
+        logger.error(f"Error parsing timestamp '{timestamp_str}': {e}")
+        return "Unknown"
 
 router = APIRouter(prefix="/gps", tags=["GPS"])
 
@@ -216,7 +249,7 @@ def get_user_devices_with_gps_status(
                     "timestamp": gps_data.get("time") if gps_data else None,
                     "address": gps_data.get("address") if gps_data else None
                 },
-                "last_update": gps_data.get("time", "Unknown") if gps_data else "Unknown"
+                "last_update": _get_relative_time(gps_data.get("time")) if gps_data else "Unknown"
             })
         except Exception as e:
             # If GPS fetch fails for a device, still include it with offline status
