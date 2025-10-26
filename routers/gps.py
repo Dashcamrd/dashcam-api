@@ -172,8 +172,15 @@ def get_user_devices_with_gps_status(
             device_data = {"deviceId": device.device_id}
             gps_result = manufacturer_api.get_latest_gps(device_data)
             
-            gps_status = "online" if gps_result.get("code") == 0 else "offline"
-            gps_data = gps_result.get("data", {}) if gps_result.get("code") == 0 else {}
+            gps_status = "online" if gps_result.get("code") == 200 else "offline"
+            
+            # Parse GPS data from manufacturer API response
+            gps_data = {}
+            if gps_result.get("code") == 200:
+                data = gps_result.get("data", {})
+                gps_info = data.get("gpsInfo", [])
+                if gps_info:
+                    gps_data = gps_info[0]  # Get the latest GPS entry
             
             # Convert raw coordinates to decimal degrees (same as map page)
             latitude = None
@@ -206,10 +213,10 @@ def get_user_devices_with_gps_status(
                     "latitude": latitude,
                     "longitude": longitude,
                     "location_name": location_name,
-                    "timestamp": gps_data.get("timestamp") if gps_data else None,
+                    "timestamp": gps_data.get("time") if gps_data else None,
                     "address": gps_data.get("address") if gps_data else None
                 },
-                "last_update": gps_data.get("timestamp", "Unknown") if gps_data else "Unknown"
+                "last_update": gps_data.get("time", "Unknown") if gps_data else "Unknown"
             })
         except Exception as e:
             # If GPS fetch fails for a device, still include it with offline status
