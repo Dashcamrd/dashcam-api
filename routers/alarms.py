@@ -6,6 +6,12 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
+import logging
+import uuid
+import time
+from adapters import StatisticsAdapter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/alarms", tags=["Alarms"])
 
@@ -38,53 +44,37 @@ def get_recent_alarms(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting alarms for device {device_id} (last {hours}h)")
+    
+    # Build request using adapter
+    current_time = int(time.time())
+    start_time = current_time - (hours * 3600)
+    query_data = StatisticsAdapter.build_alarm_query_request(
+        device_ids=[device_id],
+        start_time=start_time,
+        end_time=current_time
+    )
+    
     # Call manufacturer API
-    query_data = {
-        "deviceId": device_id,
-        "hours": hours
-    }
     result = manufacturer_api.get_vehicle_alarms(query_data)
     
-    if result.get("code") == 0:
-        alarms_data = result.get("data", {})
-        alarms = alarms_data.get("alarms", [])
-        
-        # Process alarms to add user-friendly information
-        processed_alarms = []
-        for alarm in alarms:
-            processed_alarms.append({
-                "alarm_id": alarm.get("id"),
-                "device_id": device_id,
-                "type": alarm.get("type"),
-                "level": alarm.get("level"),  # warning, critical, etc.
-                "message": alarm.get("message"),
-                "timestamp": alarm.get("timestamp"),
-                "location": {
-                    "latitude": alarm.get("latitude"),
-                    "longitude": alarm.get("longitude"),
-                    "address": alarm.get("address")
-                },
-                "has_attachment": alarm.get("hasAttachment", False),
-                "status": alarm.get("status", "active")
-            })
-        
-        return {
-            "success": True,
-            "device_id": device_id,
-            "time_range": f"Last {hours} hours",
-            "alarms": processed_alarms,
-            "total_alarms": len(processed_alarms),
-            "alarm_summary": {
-                "critical": len([a for a in processed_alarms if a.get("level") == "critical"]),
-                "warning": len([a for a in processed_alarms if a.get("level") == "warning"]),
-                "info": len([a for a in processed_alarms if a.get("level") == "info"])
-            }
+    # Parse response using adapter with correlation ID
+    alarm_summary = StatisticsAdapter.parse_alarm_response(result, device_id, correlation_id)
+    
+    return {
+        "success": True,
+        "device_id": device_id,
+        "time_range": f"Last {hours} hours",
+        "alarms": [a.model_dump(by_alias=False) for a in alarm_summary.alarms],
+        "total_alarms": alarm_summary.total_alarms,
+        "alarm_summary": {
+            "critical": alarm_summary.critical_count,
+            "warning": alarm_summary.warning_count,
+            "info": alarm_summary.info_count
         }
-    else:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Failed to get alarms: {result.get('message', 'Unknown error')}"
-        )
+    }
 
 @router.post("/query")
 def query_alarms_by_time_range(

@@ -10,3 +10,4 @@ pydantic-settings
 requests
 python-dotenv
 cryptography
+PyYAML

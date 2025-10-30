@@ -6,6 +6,11 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
+import logging
+import uuid
+from adapters import MediaAdapter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/media", tags=["Media"])
 
@@ -39,21 +44,30 @@ def start_preview(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    preview_data = {
-        "deviceId": request.device_id,
-        "channel": request.channel,
-        "stream": request.stream
-    }
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Starting preview for device {request.device_id}")
     
+    # Build request using adapter
+    preview_data = MediaAdapter.build_preview_request(
+        device_id=request.device_id,
+        channel=request.channel,
+        stream_type=request.stream,
+        data_type=1  # Preview
+    )
+    
+    # Call manufacturer API
     result = manufacturer_api.open_preview(preview_data)
     
-    if result.get("code") == 0:
+    # Parse response using adapter with correlation ID
+    preview_dto = MediaAdapter.parse_preview_response(result, request.device_id, correlation_id)
+    
+    if preview_dto:
         return {
             "success": True,
             "message": "Preview started successfully",
-            "data": result.get("data", {}),
-            "device_id": request.device_id
+            "device_id": request.device_id,
+            "videos": [v.model_dump(by_alias=False) for v in preview_dto.videos]
         }
     else:
         raise HTTPException(
@@ -71,11 +85,16 @@ def close_preview(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    preview_data = {"deviceId": device_id}
-    result = manufacturer_api.close_preview(preview_data)
+    # Build request using adapter
+    close_data = MediaAdapter.build_close_preview_request(device_id)
     
-    if result.get("code") == 0:
+    # Call manufacturer API
+    result = manufacturer_api.close_preview(close_data)
+    
+    # Parse response using adapter
+    success = MediaAdapter.parse_simple_response(result)
+    
+    if success:
         return {
             "success": True,
             "message": "Preview closed successfully",
@@ -100,23 +119,28 @@ def start_playback(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    playback_data = {
-        "deviceId": request.device_id,
-        "channel": request.channel,
-        "startTime": request.start_time,
-        "endTime": request.end_time
-    }
+    # Build request using adapter
+    playback_data = MediaAdapter.build_playback_request(
+        device_id=request.device_id,
+        start_time=request.start_time,
+        end_time=request.end_time,
+        channel=request.channel,
+        data_type=1  # Playback
+    )
     
+    # Call manufacturer API
     result = manufacturer_api.start_playback(playback_data)
     
-    if result.get("code") == 0:
+    # Parse response using adapter
+    preview_dto = MediaAdapter.parse_preview_response(result, request.device_id)
+    
+    if preview_dto:
         return {
             "success": True,
             "message": "Playback started successfully",
-            "data": result.get("data", {}),
             "device_id": request.device_id,
-            "time_range": f"{request.start_time} to {request.end_time}"
+            "time_range": f"{request.start_time} to {request.end_time}",
+            "videos": [v.model_dump(by_alias=False) for v in preview_dto.videos]
         }
     else:
         raise HTTPException(
@@ -134,11 +158,16 @@ def close_playback(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    playback_data = {"deviceId": device_id}
-    result = manufacturer_api.close_playback(playback_data)
+    # Build request using adapter
+    close_data = MediaAdapter.build_close_playback_request(device_id)
     
-    if result.get("code") == 0:
+    # Call manufacturer API
+    result = manufacturer_api.close_playback(close_data)
+    
+    # Parse response using adapter
+    success = MediaAdapter.parse_simple_response(result)
+    
+    if success:
         return {
             "success": True,
             "message": "Playback closed successfully",

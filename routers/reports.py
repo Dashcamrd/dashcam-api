@@ -6,6 +6,12 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
+import logging
+import uuid
+from adapters import StatisticsAdapter
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -42,49 +48,41 @@ def get_vehicle_statistics(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Convert dates to Unix timestamps
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_time = int(start_dt.timestamp())
+        end_time = int(end_dt.timestamp()) + 86399  # End of day
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting statistics for device {device_id} ({start_date} to {end_date})")
+    
+    # Build request using adapter
+    query_data = StatisticsAdapter.build_vehicle_statistics_request(
+        device_ids=[device_id],
+        start_time=start_time,
+        end_time=end_time
+    )
+    
     # Call manufacturer API
-    query_data = {
-        "deviceId": device_id,
-        "startDate": start_date,
-        "endDate": end_date,
-        "statType": stat_type
-    }
     result = manufacturer_api.get_vehicle_statistics(query_data)
     
-    if result.get("code") == 0:
-        stats_data = result.get("data", {})
-        
-        # Process and enhance statistics data
-        processed_stats = {
-            "device_id": device_id,
-            "date_range": f"{start_date} to {end_date}",
-            "stat_type": stat_type,
-            "summary": {
-                "total_distance": stats_data.get("totalDistance", 0),
-                "total_duration": stats_data.get("totalDuration", 0),
-                "average_speed": stats_data.get("averageSpeed", 0),
-                "max_speed": stats_data.get("maxSpeed", 0),
-                "total_stops": stats_data.get("totalStops", 0),
-                "fuel_consumption": stats_data.get("fuelConsumption", 0),
-                "idle_time": stats_data.get("idleTime", 0)
-            },
-            "daily_breakdown": stats_data.get("dailyBreakdown", []),
-            "route_analysis": stats_data.get("routeAnalysis", {}),
-            "efficiency_metrics": {
-                "fuel_efficiency": stats_data.get("fuelEfficiency", 0),
-                "driving_score": stats_data.get("drivingScore", 0),
-                "utilization_rate": stats_data.get("utilizationRate", 0)
-            },
-            "alarms_summary": {
-                "total_alarms": stats_data.get("totalAlarms", 0),
-                "critical_alarms": stats_data.get("criticalAlarms", 0),
-                "alarm_types": stats_data.get("alarmTypes", {})
-            }
-        }
-        
+    # Parse response using adapter with correlation ID
+    stats_dto = StatisticsAdapter.parse_vehicle_statistics_response(
+        result,
+        device_id,
+        f"{start_date} to {end_date}",
+        correlation_id
+    )
+    
+    if stats_dto:
         return {
             "success": True,
-            "statistics": processed_stats
+            "statistics": stats_dto.model_dump(by_alias=False)
         }
     else:
         raise HTTPException(
@@ -104,35 +102,47 @@ def get_vehicle_details(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Convert date to Unix timestamps (full day range)
+    try:
+        date_dt = datetime.strptime(request.date, "%Y-%m-%d")
+        start_time = int(date_dt.timestamp())
+        end_time = start_time + 86399  # End of day
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Build request using adapter
+    query_data = StatisticsAdapter.build_vehicle_detail_request(
+        device_id=request.device_id,
+        start_time=start_time,
+        end_time=end_time
+    )
+    
     # Call manufacturer API
-    query_data = {
-        "deviceId": request.device_id,
-        "date": request.date,
-        "detailType": request.detail_type
-    }
     result = manufacturer_api.get_vehicle_details(query_data)
     
-    if result.get("code") == 0:
-        details_data = result.get("data", {})
-        
+    # Parse response using adapter
+    detail_dto = StatisticsAdapter.parse_vehicle_detail_response(
+        result,
+        request.device_id,
+        request.date
+    )
+    
+    if detail_dto:
         return {
             "success": True,
             "device_id": request.device_id,
             "date": request.date,
             "detail_type": request.detail_type,
             "vehicle_details": {
-                "trips": details_data.get("trips", []),
-                "stops": details_data.get("stops", []),
-                "alarms": details_data.get("alarms", []),
-                "maintenance_alerts": details_data.get("maintenanceAlerts", []),
-                "driver_behavior": details_data.get("driverBehavior", {}),
-                "route_details": details_data.get("routeDetails", {})
+                "trips": detail_dto.trips,
+                "stops": detail_dto.stops,
+                "alarms": [a.model_dump(by_alias=False) for a in detail_dto.alarms]
             },
             "summary": {
-                "total_trips": len(details_data.get("trips", [])),
-                "total_stops": len(details_data.get("stops", [])),
-                "total_distance": details_data.get("totalDistance", 0),
-                "total_duration": details_data.get("totalDuration", 0)
+                "total_trips": len(detail_dto.trips),
+                "total_stops": len(detail_dto.stops),
+                "total_distance": detail_dto.total_distance_km,
+                "total_duration": detail_dto.total_duration_s
             }
         }
     else:

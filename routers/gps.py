@@ -8,6 +8,9 @@ from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime
 import logging
+import uuid
+from models.dto import LatestGpsDto, TrackPlaybackDto, TrackPointDto, AccStateDto
+from adapters import GPSAdapter, DeviceAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -101,39 +104,27 @@ def get_latest_gps(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    device_data = {"deviceId": device_id}
-    result = manufacturer_api.get_latest_gps(device_data)
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting latest GPS for device {device_id}")
     
-    if result.get("code") == 200:  # Manufacturer API returns 200 for success
-        data = result.get("data", {})
-        gps_info = data.get("gpsInfo", [])
-        
-        if gps_info:
-            # Get the latest GPS entry (first one in the array)
-            latest_gps = gps_info[0]
-            return {
-                "success": True,
-                "device_id": device_id,
-                "latitude": latest_gps.get("latitude"),
-                "longitude": latest_gps.get("longitude"),
-                "speed": latest_gps.get("speed"),
-                "direction": latest_gps.get("direction"),
-                "height": latest_gps.get("height"),
-                "timestamp": latest_gps.get("time"),
-                "address": None  # Not provided by manufacturer API
-            }
-        else:
-            return {
-                "success": False,
-                "device_id": device_id,
-                "message": "No GPS data found for this device"
-            }
+    # Build request using adapter
+    request_data = GPSAdapter.build_latest_gps_request(device_id)
+    
+    # Call manufacturer API
+    result = manufacturer_api.get_latest_gps({"deviceId": device_id})
+    
+    # Parse response using adapter with correlation ID
+    dto = GPSAdapter.parse_latest_gps_response(result, device_id, correlation_id)
+    
+    if dto:
+        return {"success": True, **dto.model_dump(by_alias=False)}
     else:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Failed to get GPS data: {result.get('message', 'Unknown error')}"
-        )
+        return {
+            "success": False,
+            "device_id": device_id,
+            "message": "No GPS data found for this device"
+        }
 
 @router.post("/track-dates")
 def query_track_dates(
@@ -182,7 +173,11 @@ def get_detailed_track_history(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting track history for device {request.device_id}")
+    
+    # Call manufacturer API (vendor expects date format, adapter handles conversion if needed)
     track_data = {
         "deviceId": request.device_id,
         "date": request.date,
@@ -191,20 +186,11 @@ def get_detailed_track_history(
     }
     result = manufacturer_api.query_detailed_track(track_data)
     
-    if result.get("code") == 0:
-        track_data = result.get("data", {})
-        return {
-            "success": True,
-            "device_id": request.device_id,
-            "date": request.date,
-            "time_range": f"{request.start_time or 'start'} to {request.end_time or 'end'}",
-            "track_points": track_data.get("points", []),
-            "total_points": len(track_data.get("points", [])),
-            "total_distance": track_data.get("totalDistance"),
-            "duration": track_data.get("duration"),
-            "max_speed": track_data.get("maxSpeed"),
-            "avg_speed": track_data.get("avgSpeed")
-        }
+    # Parse response using adapter with correlation ID
+    playback = GPSAdapter.parse_track_history_response(result, request.device_id, correlation_id)
+    
+    if playback:
+        return {"success": True, **playback.model_dump(by_alias=False)}
     else:
         raise HTTPException(
             status_code=400, 
@@ -240,46 +226,32 @@ def get_user_devices_with_gps_status(
             if gps_result.get("code") != 200:
                 gps_result = manufacturer_api.get_latest_gps(device_data)
             
-            gps_status = "online" if gps_result.get("code") == 200 else "offline"
+            # Generate correlation ID for tracing
+            correlation_id = str(uuid.uuid4())[:8]
             
-            # Parse GPS data from manufacturer API response
-            gps_data = {}
-            last_online_time = None
+            # Parse GPS data using adapter
+            gps_dto = GPSAdapter.parse_latest_gps_response(gps_result, device.device_id, correlation_id)
             
-            if gps_result.get("code") == 200:
-                data = gps_result.get("data", {})
-                
-                # Check if this is v2 response with lastOnlineTime
-                if "lastOnlineTime" in data:
-                    last_online_time = data.get("lastOnlineTime")
-                    gps_data = data  # v2 response structure might be different
-                else:
-                    # v1 response structure
-                    gps_info = data.get("gpsInfo", [])
-                    if gps_info:
-                        gps_data = gps_info[0]  # Get the latest GPS entry
+            gps_status = "online" if gps_dto else "offline"
             
-            # Convert raw coordinates to decimal degrees (same as map page)
-            latitude = None
-            longitude = None
+            # Extract location info from DTO
+            latitude = gps_dto.latitude if gps_dto else None
+            longitude = gps_dto.longitude if gps_dto else None
             location_name = "Location unavailable"
             
-            if gps_data:
-                lat_raw = gps_data.get("latitude")
-                lng_raw = gps_data.get("longitude")
-                
-                if lat_raw and lng_raw:
-                    # Convert from raw integer format to decimal degrees
-                    latitude = lat_raw / 1000000.0
-                    longitude = lng_raw / 1000000.0
-                    
-                    # Generate human-readable location name (same logic as map page)
-                    if latitude and longitude:
-                        # Simple location mapping based on coordinates
-                        if 5.2 <= latitude <= 5.4 and 100.2 <= longitude <= 100.4:
-                            location_name = "Batu Maung, Malaysia"
-                        else:
-                            location_name = f"{latitude:.6f}, {longitude:.6f}"
+            if latitude and longitude:
+                # Generate human-readable location name (same logic as map page)
+                if 5.2 <= latitude <= 5.4 and 100.2 <= longitude <= 100.4:
+                    location_name = "Batu Maung, Malaysia"
+                else:
+                    location_name = f"{latitude:.6f}, {longitude:.6f}"
+            
+            # Get timestamp for relative time
+            last_online_time = None
+            timestamp_for_relative = None
+            if gps_dto:
+                last_online_time = gps_dto.timestamp_ms
+                timestamp_for_relative = gps_dto.timestamp_ms
             
             devices_with_gps.append({
                 "device_id": device.device_id,
@@ -290,10 +262,10 @@ def get_user_devices_with_gps_status(
                     "latitude": latitude,
                     "longitude": longitude,
                     "location_name": location_name,
-                    "timestamp": gps_data.get("time") if gps_data else None,
-                    "address": gps_data.get("address") if gps_data else None
+                    "timestamp": timestamp_for_relative,
+                    "address": gps_dto.address if gps_dto else None
                 },
-                "last_update": _get_relative_time_from_timestamp(last_online_time) if last_online_time else _get_relative_time(gps_data.get("time")) if gps_data else "Unknown"
+                "last_update": _get_relative_time_from_timestamp(last_online_time // 1000) if last_online_time else "Unknown"
             })
         except Exception as e:
             # If GPS fetch fails for a device, still include it with offline status
@@ -331,31 +303,23 @@ def get_device_states(
     if not verify_device_access(device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Call manufacturer API
-    device_data = {"deviceId": device_id}
-    result = manufacturer_api.get_device_states(device_data)
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting device states for device {device_id}")
     
-    if result.get("code") == 200:  # Manufacturer API returns 200 for success
-        data = result.get("data", {})
-        device_list = data.get("list", [])
-        
-        if device_list and len(device_list) > 0:
-            device_data = device_list[0]  # Get first device
-            acc_state = device_data.get("accState", 0)  # 0 = OFF, 1 = ON
-            
-            return {
-                "success": True,
-                "acc_status": acc_state == 1,  # Convert to boolean
-                "acc_state": acc_state,
-                "raw_data": device_data
-            }
-        else:
-            return {
-                "success": False,
-                "message": "No device data found",
-                "acc_status": False,
-                "acc_state": 0
-            }
+    # Build request using adapter
+    request_data = DeviceAdapter.build_device_states_request([device_id])
+    
+    # Call manufacturer API
+    result = manufacturer_api.get_device_states({"deviceId": device_id})
+    
+    # Parse response using adapter with correlation ID
+    dto = DeviceAdapter.parse_device_states_response(result, device_id, correlation_id)
+    
+    if dto and dto.last_online_time_ms is not None:
+        return {"success": True, **dto.model_dump(by_alias=False)}
+    elif dto:
+        return {"success": False, **dto.model_dump(by_alias=False), "message": "No device data found"}
     else:
         raise HTTPException(status_code=500, detail="Failed to fetch device states")
 

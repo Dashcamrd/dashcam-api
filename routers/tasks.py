@@ -6,6 +6,11 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional, List
 from pydantic import BaseModel
+import logging
+import uuid
+from adapters import TaskAdapter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -44,25 +49,41 @@ def create_text_delivery_task(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Convert delivery_time to Unix timestamp if provided
+    send_time = None
+    if request.delivery_time:
+        from datetime import datetime
+        try:
+            dt = datetime.strptime(request.delivery_time, "%Y-%m-%d %H:%M:%S")
+            send_time = int(dt.timestamp())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid delivery_time format. Use: YYYY-MM-DD HH:MM:SS")
+    
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Creating task for device {request.device_id}")
+    
+    # Build request using adapter
+    task_data = TaskAdapter.build_create_task_request(
+        device_ids=[request.device_id],
+        content=request.message,
+        send_time=send_time
+    )
+    
     # Call manufacturer API
-    task_data = {
-        "deviceId": request.device_id,
-        "message": request.message,
-        "priority": request.priority,
-        "deliveryTime": request.delivery_time,
-        "createdBy": current_user["invoice_no"]
-    }
     result = manufacturer_api.create_text_delivery_task(task_data)
     
-    if result.get("code") == 0:
-        task_info = result.get("data", {})
+    # Parse response using adapter with correlation ID
+    task_dto = TaskAdapter.parse_task_response(result, correlation_id=correlation_id)
+    
+    if task_dto:
         return {
             "success": True,
-            "task_id": task_info.get("taskId"),
+            "task_id": task_dto.task_id,
             "device_id": request.device_id,
             "message": request.message,
-            "status": "pending",
-            "created_at": task_info.get("createdAt"),
+            "status": task_dto.status or "pending",
+            "created_at": task_dto.created_at,
             "delivery_time": request.delivery_time or "immediate"
         }
     else:
@@ -90,55 +111,45 @@ def get_task_list(
     if device_id and device_id not in user_device_ids:
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting task list (page={page})")
+    
+    # Build request using adapter
+    query_data = TaskAdapter.build_task_list_request(
+        page=page,
+        page_size=page_size,
+        device_id=device_id,
+        status=status
+    )
+    
     # Call manufacturer API
-    query_data = {
-        "createdBy": current_user["invoice_no"],
-        "status": status,
-        "deviceId": device_id,
-        "page": page,
-        "pageSize": page_size
-    }
     result = manufacturer_api.get_task_list(query_data)
     
-    if result.get("code") == 0:
-        tasks_data = result.get("data", {})
-        tasks = tasks_data.get("tasks", [])
-        
-        # Filter tasks to only include user's devices
-        filtered_tasks = []
-        for task in tasks:
-            if task.get("deviceId") in user_device_ids:
-                filtered_tasks.append({
-                    "task_id": task.get("id"),
-                    "device_id": task.get("deviceId"),
-                    "message": task.get("message"),
-                    "status": task.get("status"),
-                    "priority": task.get("priority"),
-                    "created_at": task.get("createdAt"),
-                    "delivery_time": task.get("deliveryTime"),
-                    "completed_at": task.get("completedAt"),
-                    "result": task.get("result")
-                })
-        
-        return {
-            "success": True,
-            "tasks": filtered_tasks,
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": len(filtered_tasks),
-                "total_pages": (len(filtered_tasks) + page_size - 1) // page_size
-            },
-            "filters": {
-                "status": status,
-                "device_id": device_id
-            }
+    # Parse response using adapter with correlation ID
+    tasks = TaskAdapter.parse_task_list_response(result, correlation_id)
+    
+    # Filter tasks to only include user's devices
+    filtered_tasks = [
+        task.model_dump(by_alias=False)
+        for task in tasks
+        if task.device_id in user_device_ids
+    ]
+    
+    return {
+        "success": True,
+        "tasks": filtered_tasks,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": len(filtered_tasks),
+            "total_pages": (len(filtered_tasks) + page_size - 1) // page_size
+        },
+        "filters": {
+            "status": status,
+            "device_id": device_id
         }
-    else:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Failed to get tasks: {result.get('message', 'Unknown error')}"
-        )
+    }
 
 @router.get("/{task_id}")
 def get_task_details(
@@ -148,33 +159,24 @@ def get_task_details(
     """
     Get detailed information about a specific task.
     """
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting task details for {task_id}")
+    
     task_data = {"taskId": task_id}
     result = manufacturer_api.get_task_details(task_data)
     
-    if result.get("code") == 0:
-        task_info = result.get("data", {})
-        
+    # Parse response using adapter with correlation ID
+    task_dto = TaskAdapter.parse_task_response(result, task_id, correlation_id)
+    
+    if task_dto:
         # Verify user has access to the device this task belongs to
-        device_id = task_info.get("deviceId")
-        if device_id and not verify_device_access(device_id, current_user):
+        if not verify_device_access(task_dto.device_id, current_user):
             raise HTTPException(status_code=403, detail="Task not accessible")
         
         return {
             "success": True,
-            "task": {
-                "task_id": task_info.get("id"),
-                "device_id": task_info.get("deviceId"),
-                "message": task_info.get("message"),
-                "status": task_info.get("status"),
-                "priority": task_info.get("priority"),
-                "created_at": task_info.get("createdAt"),
-                "delivery_time": task_info.get("deliveryTime"),
-                "completed_at": task_info.get("completedAt"),
-                "result": task_info.get("result"),
-                "error_message": task_info.get("errorMessage"),
-                "retry_count": task_info.get("retryCount"),
-                "created_by": task_info.get("createdBy")
-            }
+            "task": task_dto.model_dump(by_alias=False)
         }
     else:
         raise HTTPException(
@@ -236,28 +238,25 @@ def get_task_execution_result(
     """
     Get task execution results and delivery status.
     """
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Getting task results for {task_id}")
+    
     task_data = {"taskId": task_id}
     result = manufacturer_api.get_task_results(task_data)
     
-    if result.get("code") == 0:
-        result_data = result.get("data", {})
-        
+    # Parse response using adapter with correlation ID
+    result_dto = TaskAdapter.parse_task_result_response(result, task_id, correlation_id)
+    
+    if result_dto:
         # Verify user has access to this task (check device ownership)
-        device_id = result_data.get("deviceId")
-        if device_id and not verify_device_access(device_id, current_user):
+        if not verify_device_access(result_dto.device_id, current_user):
             raise HTTPException(status_code=403, detail="Task not accessible")
         
         return {
             "success": True,
             "task_id": task_id,
-            "execution_result": {
-                "status": result_data.get("status"),
-                "delivered_at": result_data.get("deliveredAt"),
-                "acknowledged_at": result_data.get("acknowledgedAt"),
-                "delivery_attempts": result_data.get("deliveryAttempts"),
-                "error_details": result_data.get("errorDetails"),
-                "device_response": result_data.get("deviceResponse")
-            }
+            "execution_result": result_dto.model_dump(by_alias=False, exclude={"task_id", "device_id"})
         }
     else:
         raise HTTPException(
@@ -315,21 +314,22 @@ def send_text_message(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
+    # Build request using adapter
+    text_data = TaskAdapter.build_text_delivery_request(
+        device_ids=[request.device_id],
+        content=request.text
+    )
+    
     # Call manufacturer API
-    text_data = {
-        "deviceId": request.device_id,
-        "text": request.text,
-        "senderName": request.sender_name or current_user["name"],
-        "sentBy": current_user["invoice_no"]
-    }
     result = manufacturer_api.send_text(text_data)
     
-    if result.get("code") == 0:
+    if result.get("code") in (200, 0):
+        data = result.get("data", {})
         return {
             "success": True,
             "device_id": request.device_id,
             "text": request.text,
-            "sent_at": result.get("data", {}).get("sentAt"),
+            "sent_at": TaskAdapter.convert_timestamp_to_ms(data.get("sentAt")) if data.get("sentAt") else None,
             "message": "Text sent successfully"
         }
     else:
