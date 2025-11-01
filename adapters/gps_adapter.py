@@ -16,12 +16,34 @@ class GPSAdapter(BaseAdapter):
     def parse_latest_gps_response(
         vendor_response: Dict[str, Any],
         device_id: str,
-        correlation_id: Optional[str] = None
+        correlation_id: Optional[str] = None,
+        use_v2_only: bool = False
     ) -> Optional[LatestGpsDto]:
         """
-        Parse vendor GPS search response into LatestGpsDto.
+        Parse vendor GPS response (v1 or v2) into LatestGpsDto.
         
-        Vendor response structure:
+        V2 response structure (getLatestGPS):
+        {
+            "code": 200,
+            "data": {
+                "list": [
+                    {
+                        "deviceId": "18270761136",
+                        "gps": {
+                            "latitude": 22.649954,  # Already in decimal
+                            "longitude": 114.148194,  # Already in decimal
+                            "speed": 359,  # 1/10 km/h units
+                            "direction": 240,
+                            "time": 1726934400,  # Unix seconds
+                            "altitude": 73
+                        },
+                        "lastOnlineTime": 1726934500
+                    }
+                ]
+            }
+        }
+        
+        V1 response structure (gps/search):
         {
             "code": 200,
             "data": {
@@ -29,10 +51,10 @@ class GPSAdapter(BaseAdapter):
                     {
                         "latitude": 5290439,  # 1e6 scaled
                         "longitude": 100291992,  # 1e6 scaled
-                        "speed": 650,  # May be in 0.1 km/h units
+                        "speed": 650,
                         "direction": 180,
                         "height": 50,
-                        "time": 1735888000  # Unix seconds
+                        "time": 1735888000
                     }
                 ]
             }
@@ -58,13 +80,74 @@ class GPSAdapter(BaseAdapter):
                     logger.warning(error_msg)
                 return None
             
-            # Extract GPS info array using config-defined path
-            gps_info = GPSAdapter.extract_response_data(vendor_response, "gps_search_v1", "data.gpsInfo")
+            data = vendor_response.get("data", {})
+            latest_gps = None
             
-            # Fallback to manual extraction if config path doesn't work
-            if gps_info is None:
-                data = vendor_response.get("data", {})
-                gps_info = data.get("gpsInfo", [])
+            # Try V2 format first (data.list[] with gps object)
+            device_list = data.get("list", [])
+            if device_list:
+                # Find device in list
+                for device_item in device_list:
+                    if device_item.get("deviceId") == device_id:
+                        gps_data = device_item.get("gps", {})
+                        if gps_data:
+                            # V2 format: coordinates already in decimal, no scaling needed
+                            latitude = gps_data.get("latitude")
+                            longitude = gps_data.get("longitude")
+                            speed_raw = gps_data.get("speed")
+                            # V2 speed is in 1/10 km/h units
+                            speed_kmh = speed_raw / 10.0 if speed_raw is not None else None
+                            direction_deg = gps_data.get("direction")
+                            altitude_m = gps_data.get("altitude")
+                            
+                            # Use ONLY lastOnlineTime (no gps.time fallback)
+                            if use_v2_only:
+                                # Use lastOnlineTime as primary (no fallback to gps.time)
+                                device_last_online = device_item.get("lastOnlineTime")
+                                timestamp_ms = GPSAdapter.convert_timestamp_to_ms(device_last_online)
+                            else:
+                                # Original logic: Try gps.time first, then lastOnlineTime
+                                gps_time = gps_data.get("time")
+                                device_last_online = device_item.get("lastOnlineTime")
+                                timestamp = gps_time or device_last_online
+                                timestamp_ms = GPSAdapter.convert_timestamp_to_ms(timestamp)
+                                if timestamp_ms is None and device_last_online:
+                                    timestamp_ms = GPSAdapter.convert_timestamp_to_ms(device_last_online)
+                            
+                            address = None  # V2 doesn't include address
+                            
+                            if correlation_id:
+                                logger.info(f"[{correlation_id}] Parsed V2 GPS response for device {device_id}")
+                                if use_v2_only:
+                                    logger.info(f"[{correlation_id}] Using ONLY lastOnlineTime: {device_item.get('lastOnlineTime')}")
+                                else:
+                                    logger.info(f"[{correlation_id}] gps.time: {gps_data.get('time')}, device.lastOnlineTime: {device_item.get('lastOnlineTime')}")
+                                logger.info(f"[{correlation_id}] Final timestamp_ms: {timestamp_ms}")
+                                logger.info(f"[{correlation_id}] Full device_item keys: {list(device_item.keys())}")
+                                logger.info(f"[{correlation_id}] Full gps_data keys: {list(gps_data.keys())}")
+                            
+                            return LatestGpsDto(
+                                deviceId=device_id,
+                                latitude=latitude,
+                                longitude=longitude,
+                                speed_kmh=speed_kmh,
+                                direction_deg=direction_deg,
+                                altitude_m=altitude_m,
+                                timestamp_ms=timestamp_ms,
+                                address=address
+                            )
+            
+            # If use_v2_only is True, don't try V1 fallback
+            if use_v2_only:
+                error_msg = f"No GPS data found in V2 response for device {device_id} (V1 fallback disabled)"
+                if correlation_id:
+                    logger.warning(f"[{correlation_id}] {error_msg}")
+                else:
+                    logger.warning(error_msg)
+                return None
+            
+            # Fallback to V1 format (data.gpsInfo[])
+            gps_info = data.get("gpsInfo", [])
             
             if not gps_info or len(gps_info) == 0:
                 error_msg = f"No GPS info found in response for device {device_id}"
@@ -74,7 +157,7 @@ class GPSAdapter(BaseAdapter):
                     logger.debug(error_msg)
                 return None
             
-            # Get first entry (latest)
+            # Get first entry (latest) - V1 format
             latest_gps = gps_info[0]
             
             # Convert coordinates
@@ -152,13 +235,13 @@ class GPSAdapter(BaseAdapter):
                     logger.warning(error_msg)
                 return None
             
-            # Extract points using config-defined path
-            raw_points = GPSAdapter.extract_response_data(vendor_response, "gps_query_detailed_track_v1", "data.points")
+            # Extract points using config-defined path (data.gpsInfo for gps_search_v1)
+            raw_points = GPSAdapter.extract_response_data(vendor_response, "gps_query_detailed_track_v1", "data.gpsInfo")
             
             # Fallback to manual extraction
             if raw_points is None:
                 data = vendor_response.get("data", {})
-                raw_points = data.get("points", []) or data.get("gpsInfo", []) or []
+                raw_points = data.get("gpsInfo", []) or data.get("points", []) or []
             
             if not raw_points:
                 raw_points = []
@@ -207,9 +290,14 @@ class GPSAdapter(BaseAdapter):
                     logger.debug(f"Error parsing track point: {e}, skipping point")
                     continue
             
-            # Extract time range
-            start_time_ms = GPSAdapter.convert_timestamp_to_ms(data.get("startTime")) or 0
-            end_time_ms = GPSAdapter.convert_timestamp_to_ms(data.get("endTime")) or 0
+            # Extract time range from first/last points or data
+            # Use timestamps from points if available, otherwise try data fields
+            if points:
+                start_time_ms = points[0].timestamp_ms
+                end_time_ms = points[-1].timestamp_ms
+            else:
+                start_time_ms = GPSAdapter.convert_timestamp_to_ms(data.get("startTime")) or 0
+                end_time_ms = GPSAdapter.convert_timestamp_to_ms(data.get("endTime")) or 0
             
             return TrackPlaybackDto(
                 deviceId=device_id,

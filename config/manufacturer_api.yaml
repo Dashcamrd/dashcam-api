@@ -89,12 +89,12 @@ profiles:
           data_path: data.dates
 
       gps_query_detailed_track_v1:
-        path: /api/v1/gps/queryDetailedTrack
+        path: /api/v1/gps/search
         method: POST
         request:
           required: [deviceId, startTime, endTime]
         response:
-          data_path: data.points
+          data_path: data.gpsInfo
 
       gps_fuzzy_query_v1:
         path: /api/v1/gps/fuzzyQuery
@@ -111,7 +111,8 @@ profiles:
         request:
           required: [deviceIds]
         response:
-          data_path: data.gpsInfo
+          data_path: data.list
+          success_codes: [200, 0]
 
       gps_search_v2:
         path: /api/v2/gps/search

@@ -278,13 +278,16 @@ class ManufacturerAPIService:
             
             url = f"{self.base_url}{endpoint_path}"
             
-            # Generate correlation ID for request tracing
-            correlation_id = str(uuid.uuid4())[:8]
+            # Generate correlation ID for request tracing - ensure uniqueness
+            import time as time_module
+            correlation_id = f"{str(uuid.uuid4())[:6]}{int(time_module.time() * 1000) % 10000}"
             attempt_text = f" (attempt {retry_count + 1}/{max_retries + 1})" if retry_count > 0 else ""
             
             logger.info(f"📡 [{correlation_id}] Making {http_method} request to {url} (endpoint: {endpoint_name}, timeout: {timeout}s{attempt_text})")
             if retry_count == 0:  # Only log request data on first attempt
                 logger.info(f"📡 [{correlation_id}] Request data: {request_data}")
+                logger.info(f"📡 [{correlation_id}] Full URL: {url}")
+                logger.info(f"📡 [{correlation_id}] Headers: {dict(headers) if 'headers' in locals() else 'N/A'}")
             
             try:
                 if http_method.upper() == "GET":
@@ -365,7 +368,32 @@ class ManufacturerAPIService:
                     else:
                         return {"code": 0, "message": text_response, "data": {}}
             else:
-                logger.error(f"❌ [{correlation_id}] API request failed: {response.status_code} - {response.text}")
+                # Log full response for debugging
+                logger.error(f"❌ [{correlation_id}] API request failed: {response.status_code}")
+                logger.error(f"❌ [{correlation_id}] Response headers: {dict(response.headers)}")
+                logger.error(f"❌ [{correlation_id}] Response body (first 500 chars): {response.text[:500]}")
+                logger.error(f"❌ [{correlation_id}] Request URL: {url}")
+                logger.error(f"❌ [{correlation_id}] Request data: {request_data}")
+                logger.error(f"❌ [{correlation_id}] Request method: {http_method}")
+                logger.error(f"❌ [{correlation_id}] Headers sent: {dict(headers) if 'headers' in locals() else 'N/A'}")
+                
+                # For 404, check if it's an HTML page (wrong endpoint) vs JSON error
+                if response.status_code == 404:
+                    # Check if response is HTML (wrong endpoint) or JSON (no data)
+                    response_text = response.text.strip()
+                    if "<html" in response_text.lower() or "<!doctype" in response_text.lower():
+                        logger.error(f"❌ [{correlation_id}] 404 HTML page received - endpoint '{endpoint_path}' likely doesn't exist!")
+                        logger.error(f"❌ [{correlation_id}] Verify endpoint path in config/manufacturer_api.yaml")
+                        return {"code": -1, "message": f"Endpoint not found (404): {endpoint_path} - check API configuration"}
+                    else:
+                        # Try to parse as JSON
+                        try:
+                            error_json = response.json()
+                            if error_json.get("code"):
+                                return error_json  # Return vendor's error format
+                        except:
+                            pass  # Not JSON, continue with standard error
+                
                 return {"code": -1, "message": f"Request failed with status {response.status_code}"}
             
         except Exception as e:

@@ -108,22 +108,71 @@ def get_latest_gps(
     correlation_id = str(uuid.uuid4())[:8]
     logger.info(f"[{correlation_id}] Getting latest GPS for device {device_id}")
     
-    # Build request using adapter
-    request_data = GPSAdapter.build_latest_gps_request(device_id)
+    # Use V2 API ONLY - no V1 fallback
+    result = manufacturer_api.get_latest_gps_v2({"deviceId": device_id})
     
-    # Call manufacturer API
-    result = manufacturer_api.get_latest_gps({"deviceId": device_id})
-    
-    # Parse response using adapter with correlation ID
-    dto = GPSAdapter.parse_latest_gps_response(result, device_id, correlation_id)
-    
-    if dto:
-        return {"success": True, **dto.model_dump(by_alias=False)}
-    else:
+    # Check if vendor API returned an error first
+    if result.get("code") == -1 or result.get("code") not in [200, 0]:
+        error_msg = result.get("message", "Unknown error from vendor API")
+        logger.warning(f"[{correlation_id}] Vendor API error for latest GPS: {error_msg}")
+        
+        # Check for vendor API infrastructure errors (database, connection issues)
+        error_msg_lower = str(error_msg).lower()
+        if "mysql" in error_msg_lower or "database" in error_msg_lower or "connection" in error_msg_lower:
+            logger.error(f"[{correlation_id}] Vendor API infrastructure error: {error_msg}")
+            return {
+                "success": False,
+                "device_id": device_id,
+                "latitude": None,
+                "longitude": None,
+                "message": "Vendor API temporarily unavailable - please try again later",
+                "is_offline": True,
+                "error_type": "vendor_infrastructure_error"
+            }
+        
+        # Return graceful response - don't treat as fatal error
         return {
             "success": False,
             "device_id": device_id,
-            "message": "No GPS data found for this device"
+            "latitude": None,
+            "longitude": None,
+            "message": "GPS data temporarily unavailable",
+            "is_offline": True
+        }
+    
+    # Parse response using adapter with correlation ID (V2 only)
+    dto = GPSAdapter.parse_latest_gps_response(result, device_id, correlation_id, use_v2_only=True)
+    
+    if dto:
+        # Return with multiple field name formats for Flutter compatibility
+        response_data = dto.model_dump(by_alias=False)
+        
+        # Always include timestamp fields (even if None) so Flutter knows what to look for
+        response_data["timestamp_ms"] = dto.timestamp_ms
+        
+        # Add timestamp aliases if available (or None if not available)
+        response_data["lastOnlineTime"] = dto.timestamp_ms
+        response_data["last_online_time_ms"] = dto.timestamp_ms
+        response_data["last_online_time"] = dto.timestamp_ms
+        
+        if dto.timestamp_ms is not None:
+            logger.info(f"[{correlation_id}] GPS endpoint returning timestamp_ms: {dto.timestamp_ms}")
+        else:
+            logger.warning(f"[{correlation_id}] GPS endpoint: timestamp_ms is None! Check vendor API response")
+            logger.warning(f"[{correlation_id}] DTO fields: {list(response_data.keys())}")
+            logger.warning(f"[{correlation_id}] Response will include timestamp_ms: None - Flutter should handle this")
+        
+        return {"success": True, **response_data}
+    else:
+        # No GPS data available - return graceful response
+        logger.info(f"[{correlation_id}] No GPS data found for device {device_id}")
+        return {
+            "success": False,
+            "device_id": device_id,
+            "latitude": None,
+            "longitude": None,
+            "message": "No GPS data available for this device",
+            "is_offline": True
         }
 
 @router.post("/track-dates")
@@ -177,14 +226,77 @@ def get_detailed_track_history(
     correlation_id = str(uuid.uuid4())[:8]
     logger.info(f"[{correlation_id}] Getting track history for device {request.device_id}")
     
-    # Call manufacturer API (vendor expects date format, adapter handles conversion if needed)
+    # Convert date to startTime/endTime (Unix timestamps in seconds)
+    from datetime import datetime, time as dt_time
+    
+    try:
+        # Parse date string (YYYY-MM-DD)
+        date_obj = datetime.strptime(request.date, "%Y-%m-%d")
+        
+        # Start of day: 00:00:00
+        start_datetime = datetime.combine(date_obj.date(), dt_time.min)
+        start_time = int(start_datetime.timestamp())
+        
+        # End of day: 23:59:59
+        end_datetime = datetime.combine(date_obj.date(), dt_time.max)
+        end_time = int(end_datetime.timestamp())
+        
+        # Override with provided times if specified
+        if request.start_time:
+            # Parse time string (HH:MM:SS) and combine with date
+            time_obj = datetime.strptime(request.start_time, "%H:%M:%S").time()
+            start_datetime = datetime.combine(date_obj.date(), time_obj)
+            start_time = int(start_datetime.timestamp())
+        
+        if request.end_time:
+            # Parse time string (HH:MM:SS) and combine with date
+            time_obj = datetime.strptime(request.end_time, "%H:%M:%S").time()
+            end_datetime = datetime.combine(date_obj.date(), time_obj)
+            end_time = int(end_datetime.timestamp())
+        
+    except ValueError as e:
+        logger.error(f"[{correlation_id}] Error parsing date/time: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid date/time format: {e}")
+    
+    # Call manufacturer API with Unix timestamps
     track_data = {
         "deviceId": request.device_id,
-        "date": request.date,
-        "startTime": request.start_time,
-        "endTime": request.end_time
+        "startTime": start_time,
+        "endTime": end_time
     }
+    
+    # Log the actual request details for debugging
+    logger.info(f"[{correlation_id}] Requesting track data:")
+    logger.info(f"[{correlation_id}]   Device ID: {request.device_id}")
+    logger.info(f"[{correlation_id}]   Date: {request.date}")
+    logger.info(f"[{correlation_id}]   Start Time (Unix): {start_time} ({datetime.fromtimestamp(start_time)})")
+    logger.info(f"[{correlation_id}]   End Time (Unix): {end_time} ({datetime.fromtimestamp(end_time)})")
+    logger.info(f"[{correlation_id}]   Request data: {track_data}")
+    
     result = manufacturer_api.query_detailed_track(track_data)
+    
+    # Log the vendor API response
+    logger.info(f"[{correlation_id}] Vendor API response: code={result.get('code')}, message={result.get('message')}")
+    
+    # Check if vendor API returned an error
+    if result.get("code") == -1 or result.get("code") not in [200, 0]:
+        error_msg = result.get("message", "Unknown error from vendor API")
+        logger.error(f"[{correlation_id}] Vendor API error: {error_msg}")
+        
+        # Check if it's a 404 - might mean no data for this date
+        if "404" in str(error_msg) or "not found" in str(error_msg).lower():
+            return {
+                "success": False,
+                "message": f"No track data available for {request.date}",
+                "device_id": request.device_id,
+                "date": request.date,
+                "points": []
+            }
+        
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Failed to get track history: {error_msg}"
+        )
     
     # Parse response using adapter with correlation ID
     playback = GPSAdapter.parse_track_history_response(result, request.device_id, correlation_id)
@@ -192,10 +304,15 @@ def get_detailed_track_history(
     if playback:
         return {"success": True, **playback.model_dump(by_alias=False)}
     else:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Failed to get track history: {result.get('message', 'Unknown error')}"
-        )
+        # Adapter returned None - likely no data or parsing issue
+        logger.warning(f"[{correlation_id}] Adapter returned no data for device {request.device_id} on {request.date}")
+        return {
+            "success": False,
+            "message": f"No track data available for {request.date}",
+            "device_id": request.device_id,
+            "date": request.date,
+            "points": []
+        }
 
 @router.get("/devices")
 def get_user_devices_with_gps_status(
@@ -219,18 +336,14 @@ def get_user_devices_with_gps_status(
         try:
             device_data = {"deviceId": device.device_id}
             
-            # Try v2 API first for lastOnlineTime, fallback to v1 if needed
+            # Use V2 API ONLY - no V1 fallback
             gps_result = manufacturer_api.get_latest_gps_v2(device_data)
-            
-            # If v2 fails, fallback to v1
-            if gps_result.get("code") != 200:
-                gps_result = manufacturer_api.get_latest_gps(device_data)
             
             # Generate correlation ID for tracing
             correlation_id = str(uuid.uuid4())[:8]
             
-            # Parse GPS data using adapter
-            gps_dto = GPSAdapter.parse_latest_gps_response(gps_result, device.device_id, correlation_id)
+            # Parse GPS data using adapter (V2 only)
+            gps_dto = GPSAdapter.parse_latest_gps_response(gps_result, device.device_id, correlation_id, use_v2_only=True)
             
             gps_status = "online" if gps_dto else "offline"
             
@@ -316,10 +429,22 @@ def get_device_states(
     # Parse response using adapter with correlation ID
     dto = DeviceAdapter.parse_device_states_response(result, device_id, correlation_id)
     
-    if dto and dto.last_online_time_ms is not None:
-        return {"success": True, **dto.model_dump(by_alias=False)}
-    elif dto:
-        return {"success": False, **dto.model_dump(by_alias=False), "message": "No device data found"}
+    if dto:
+        # Return with both snake_case and camelCase field names for compatibility
+        response_data = {
+            "success": True,
+            "device_id": dto.device_id,
+            "acc_on": dto.acc_on,
+            "acc_status": dto.acc_on,  # Alias for Flutter
+        }
+        
+        # NOTE: Device states endpoint does NOT return lastOnlineTime
+        # The vendor API only returns: deviceId, state, accState
+        # Last online time must come from GPS endpoint (/gps/latest/{device_id})
+        # Do not include lastOnlineTime in device states response
+        logger.info(f"[{correlation_id}] Device states endpoint does not provide lastOnlineTime - use GPS endpoint instead")
+        
+        return response_data
     else:
         raise HTTPException(status_code=500, detail="Failed to fetch device states")
 

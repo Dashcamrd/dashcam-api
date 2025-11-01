@@ -98,14 +98,19 @@ class DeviceAdapter(BaseAdapter):
             acc_state_raw = device_state.get("accState", 0)
             acc_on = DeviceAdapter.normalize_acc_state(acc_state_raw)
             
-            # Parse last online time
-            last_online = device_state.get("lastOnlineTime")
-            last_online_time_ms = DeviceAdapter.convert_timestamp_to_ms(last_online)
+            # NOTE: Device states endpoint does NOT return lastOnlineTime
+            # The vendor API response only includes: deviceId, state, accState
+            # Last online time must come from GPS endpoint, not device states
+            # Setting last_online_time_ms to None to indicate it's not available here
+            
+            if correlation_id:
+                logger.info(f"[{correlation_id}] Device state raw data: {device_state}")
+                logger.info(f"[{correlation_id}] Device states endpoint does not provide lastOnlineTime - use GPS endpoint instead")
             
             return AccStateDto(
                 deviceId=device_id,
                 acc_on=acc_on,
-                last_online_time_ms=last_online_time_ms
+                last_online_time_ms=None  # Not available from device states endpoint
             )
             
         except Exception as e:
