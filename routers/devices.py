@@ -6,6 +6,9 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional, List
 from pydantic import BaseModel
+from database import SessionLocal
+from models.device_db import DeviceDB
+from datetime import datetime
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -247,5 +250,116 @@ def get_organization_tree(current_user: dict = Depends(get_current_user)):
             status_code=400, 
             detail=f"Failed to get organization tree: {result.get('message', 'Unknown error')}"
         )
+
+class AddDeviceRequest(BaseModel):
+    device_id: str
+
+@router.post("/add")
+def add_device_to_user(
+    request: AddDeviceRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Add a device to the current user's account.
+    - If device exists and is unassigned: Link it to user
+    - If device exists and is assigned to another user:
+      * Admin (ADMIN001) can take it
+      * Regular users get an error
+    - If device doesn't exist: Create it and link to user
+    """
+    db = SessionLocal()
+    try:
+        device_id = request.device_id.strip()
+        user_id = current_user["user_id"]
+        invoice_no = current_user["invoice_no"]
+        
+        # Check if user is admin
+        is_admin = invoice_no == "ADMIN001"
+        
+        # Check if device exists
+        device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+        
+        if device:
+            # Device exists
+            if device.assigned_user_id is None:
+                # Device is unassigned - link it to user
+                device.assigned_user_id = user_id
+                db.commit()
+                return {
+                    "success": True,
+                    "message": f"Device {device_id} has been added to your account",
+                    "device": {
+                        "id": device.id,
+                        "device_id": device.device_id,
+                        "name": device.name,
+                        "status": device.status
+                    }
+                }
+            elif device.assigned_user_id == user_id:
+                # Device already assigned to this user
+                return {
+                    "success": True,
+                    "message": f"Device {device_id} is already in your account",
+                    "device": {
+                        "id": device.id,
+                        "device_id": device.device_id,
+                        "name": device.name,
+                        "status": device.status
+                    }
+                }
+            else:
+                # Device assigned to another user
+                if is_admin:
+                    # Admin can take devices from other users
+                    old_user_id = device.assigned_user_id
+                    device.assigned_user_id = user_id
+                    db.commit()
+                    return {
+                        "success": True,
+                        "message": f"Device {device_id} has been transferred to your account (admin privilege)",
+                        "device": {
+                            "id": device.id,
+                            "device_id": device.device_id,
+                            "name": device.name,
+                            "status": device.status
+                        }
+                    }
+                else:
+                    # Regular user cannot take device from another user
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Device {device_id} is already assigned to another user"
+                    )
+        else:
+            # Device doesn't exist - create it
+            new_device = DeviceDB(
+                device_id=device_id,
+                name=f"Device {device_id}",
+                assigned_user_id=user_id,
+                org_id="ORG001",
+                status="offline",
+                created_at=datetime.utcnow()
+            )
+            db.add(new_device)
+            db.commit()
+            db.refresh(new_device)
+            
+            return {
+                "success": True,
+                "message": f"Device {device_id} has been created and added to your account",
+                "device": {
+                    "id": new_device.id,
+                    "device_id": new_device.device_id,
+                    "name": new_device.name,
+                    "status": new_device.status
+                }
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error adding device: {str(e)}")
+    finally:
+        db.close()
 
 
