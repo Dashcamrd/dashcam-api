@@ -63,6 +63,7 @@ def create_user(user_data: dict, db: Session = None):
 
 def register_user(user: UserCreate):
     """Register a new user with invoice number, device ID, name, email, and password"""
+    from models.device_db import DeviceDB
     db: Session = SessionLocal()
     try:
         # Check if invoice number already exists
@@ -87,6 +88,26 @@ def register_user(user: UserCreate):
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
+        
+        # Link device to user if device_id is provided
+        if user.device_id:
+            device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
+            if device:
+                # Device exists - link it to the user
+                device.assigned_user_id = db_user.id
+                db.commit()
+            else:
+                # Device doesn't exist - create it
+                new_device = DeviceDB(
+                    device_id=user.device_id,
+                    name=f"Device {user.device_id}",
+                    assigned_user_id=db_user.id,
+                    org_id="ORG001",  # Default org
+                    status="offline",
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_device)
+                db.commit()
         
         # Create access token for immediate login
         token = create_access_token({
