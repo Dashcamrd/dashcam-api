@@ -53,7 +53,7 @@ def start_preview(
         device_id=request.device_id,
         channel=request.channel,
         stream_type=request.stream,
-        data_type=1  # Preview
+        data_type=3  # Monitor mode (includes audio)
     )
     
     # Call manufacturer API
