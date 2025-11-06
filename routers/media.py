@@ -46,33 +46,50 @@ def start_preview(
     
     # Generate correlation ID for this request
     correlation_id = str(uuid.uuid4())[:8]
-    logger.info(f"[{correlation_id}] Starting preview for device {request.device_id}")
+    logger.info(f"[{correlation_id}] Starting preview+monitor for device {request.device_id}")
     
-    # Build request using adapter
+    # Request 1: Get video stream (Preview - dataType=1)
     preview_data = MediaAdapter.build_preview_request(
         device_id=request.device_id,
         channel=request.channel,
         stream_type=request.stream,
-        data_type=3  # Monitor mode (includes audio)
+        data_type=1  # Preview (video only)
     )
     
-    # Call manufacturer API
-    result = manufacturer_api.open_preview(preview_data)
+    preview_result = manufacturer_api.open_preview(preview_data)
+    preview_dto = MediaAdapter.parse_preview_response(preview_result, request.device_id, correlation_id + "_video")
     
-    # Parse response using adapter with correlation ID
-    preview_dto = MediaAdapter.parse_preview_response(result, request.device_id, correlation_id)
+    # Request 2: Get audio stream (Monitor - dataType=3)
+    monitor_data = MediaAdapter.build_preview_request(
+        device_id=request.device_id,
+        channel=request.channel,
+        stream_type=request.stream,
+        data_type=3  # Monitor (audio only)
+    )
     
-    if preview_dto:
+    monitor_result = manufacturer_api.open_preview(monitor_data)
+    monitor_dto = MediaAdapter.parse_preview_response(monitor_result, request.device_id, correlation_id + "_audio")
+    
+    if preview_dto and monitor_dto:
+        # Combine both: video URL from preview, audio URL from monitor
+        videos_with_audio = []
+        for video in preview_dto.videos:
+            video_dict = video.model_dump(by_alias=False)
+            # Add audio URL from monitor
+            if monitor_dto.videos:
+                video_dict['audio_url'] = monitor_dto.videos[0].play_url
+            videos_with_audio.append(video_dict)
+        
         return {
             "success": True,
-            "message": "Preview started successfully",
+            "message": "Preview+Monitor started successfully",
             "device_id": request.device_id,
-            "videos": [v.model_dump(by_alias=False) for v in preview_dto.videos]
+            "videos": videos_with_audio
         }
     else:
         raise HTTPException(
             status_code=400, 
-            detail=f"Failed to start preview: {result.get('message', 'Unknown error')}"
+            detail=f"Failed to start preview+monitor: Preview={bool(preview_dto)}, Monitor={bool(monitor_dto)}"
         )
 
 @router.post("/preview/close")
