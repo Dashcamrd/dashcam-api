@@ -142,7 +142,8 @@ def start_playback(
         start_time=request.start_time,
         end_time=request.end_time,
         channel=request.channel,
-        data_type=1  # Playback
+        data_type=1,  # Playback
+        stream_type=0  # 0=main stream, 1=sub stream (default to main)
     )
     
     # Call manufacturer API

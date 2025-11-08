@@ -156,18 +156,29 @@ class MediaAdapter(BaseAdapter):
             stream_type: Optional stream type (0=main, 1=sub)
         
         Returns:
-            Request dictionary
+            Request dictionary with Unix timestamps and required parameters
         """
+        from datetime import datetime
+        
+        # Convert time strings to Unix timestamps (seconds)
+        try:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+            start_timestamp = int(start_dt.timestamp())
+            end_timestamp = int(end_dt.timestamp())
+        except ValueError as e:
+            raise ValueError(f"Invalid time format. Expected 'YYYY-MM-DD HH:MM:SS', got: {start_time} / {end_time}") from e
+        
         request: Dict[str, Any] = {
             "deviceId": device_id,
             "channels": [channel],
-            "startTime": start_time,
-            "endTime": end_time,
-            "dataType": data_type
+            "startTime": start_timestamp,  # Unix timestamp (int seconds)
+            "endTime": end_timestamp,       # Unix timestamp (int seconds)
+            "dataType": data_type,
+            "streamType": stream_type if stream_type is not None else 0,  # 0=main stream, 1=sub stream
+            "method": 0,  # 0=normal, 1=FF, 2=keyframe rewind, 3=keyframe, 4=single frame
+            "multiple": 1  # 0=invalid, 1=1x, 2=2x, 3=4x, 4=8x, 5=16x (default to 1x speed)
         }
-        
-        if stream_type is not None:
-            request["streamType"] = stream_type
         
         return request
     
