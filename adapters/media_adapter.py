@@ -158,12 +158,16 @@ class MediaAdapter(BaseAdapter):
         Returns:
             Request dictionary with Unix timestamps and required parameters
         """
-        from datetime import datetime
+        from datetime import datetime, timezone, timedelta
         
         # Convert time strings to Unix timestamps (seconds)
+        # IMPORTANT: We assume the input time is in GMT+8 (UTC+8) timezone
+        # This is the timezone used by the manufacturer API and dashcam devices
+        gmt8 = timezone(timedelta(hours=8))
         try:
-            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+            # Parse as naive datetime, then explicitly set to GMT+8
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt8)
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt8)
             start_timestamp = int(start_dt.timestamp())
             end_timestamp = int(end_dt.timestamp())
         except ValueError as e:
