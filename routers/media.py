@@ -25,6 +25,10 @@ class PlaybackRequest(BaseModel):
     start_time: str  # format: "2024-01-01 10:00:00"
     end_time: str    # format: "2024-01-01 11:00:00"
 
+class IntercomRequest(BaseModel):
+    device_id: str
+    channel: Optional[int] = 1
+
 def verify_device_access(device_id: str, current_user: dict) -> bool:
     """Verify that the current user has access to the specified device"""
     user_devices = get_user_devices(current_user["user_id"])
@@ -195,6 +199,80 @@ def close_playback(
         raise HTTPException(
             status_code=400, 
             detail=f"Failed to close playback: {result.get('message', 'Unknown error')}"
+        )
+
+@router.post("/intercom/start")
+def start_intercom(
+    request: IntercomRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Start two-way intercom with device.
+    Returns WebRTC URLs for playing device audio and pushing user audio.
+    """
+    # Verify user has access to this device
+    if not verify_device_access(request.device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Starting intercom for device {request.device_id}")
+    
+    # Build request using adapter
+    intercom_data = MediaAdapter.build_intercom_request(request.device_id, request.channel)
+    
+    # Call manufacturer API
+    result = manufacturer_api.start_intercom(intercom_data)
+    
+    # Check if successful
+    if result.get("code") == 200 and result.get("data", {}).get("errorCode") == 200:
+        data = result.get("data", {})
+        return {
+            "success": True,
+            "message": "Intercom started successfully",
+            "device_id": request.device_id,
+            "channel": request.channel,
+            "play_url": data.get("playUrl"),  # WebRTC URL for receiving device audio
+            "push_url": data.get("pushUrl"),  # WebRTC URL for sending user audio
+        }
+    else:
+        error_desc = result.get("data", {}).get("errorDesc", result.get("message", "Unknown error"))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to start intercom: {error_desc}"
+        )
+
+@router.post("/intercom/stop")
+def stop_intercom(
+    request: IntercomRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Stop two-way intercom with device"""
+    # Verify user has access to this device
+    if not verify_device_access(request.device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] Stopping intercom for device {request.device_id}")
+    
+    # Build request using adapter
+    intercom_data = MediaAdapter.build_intercom_request(request.device_id, request.channel)
+    
+    # Call manufacturer API
+    result = manufacturer_api.end_intercom(intercom_data)
+    
+    # Check if successful
+    if result.get("code") == 200:
+        return {
+            "success": True,
+            "message": "Intercom stopped successfully",
+            "device_id": request.device_id
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to stop intercom: {result.get('message', 'Unknown error')}"
         )
 
 @router.get("/files/{device_id}")
