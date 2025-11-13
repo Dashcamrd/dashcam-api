@@ -180,7 +180,7 @@ class MediaAdapter(BaseAdapter):
             "endTime": end_timestamp,       # Unix timestamp (int seconds)
             "dataType": data_type,
             "streamType": stream_type if stream_type is not None else 0,  # 0=main stream, 1=sub stream
-            "method": 0,  # 0=normal, 1=FF, 2=keyframe rewind, 3=keyframe, 4=single frame
+            "method": 1,  # 0=normal, 1=FF (fast forward), 2=keyframe rewind, 3=keyframe, 4=single frame
             "multiple": 1  # 0=invalid, 1=1x, 2=2x, 3=4x, 4=8x, 5=16x (default to 1x speed)
         }
         
