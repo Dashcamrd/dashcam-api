@@ -309,9 +309,10 @@ def get_file_list(
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
     # Build request for manufacturer API
+    # Vendor API expects "channels" as an array
     file_list_data = {
         "deviceId": request.device_id,
-        "channel": request.channel,  # Single channel value
+        "channels": [request.channel],  # Array format required
         "startTime": start_timestamp,
         "endTime": end_timestamp,
         "mediaType": 2,  # 2=Video
