@@ -311,7 +311,7 @@ def get_file_list(
     # Build request for manufacturer API
     file_list_data = {
         "deviceId": request.device_id,
-        "channel": request.channel,
+        "channel": request.channel,  # Single channel value
         "startTime": start_timestamp,
         "endTime": end_timestamp,
         "mediaType": 2,  # 2=Video
@@ -320,42 +320,72 @@ def get_file_list(
     }
     
     logger.info(f"📹 Getting file list for {request.device_id} on {request.date}")
+    logger.info(f"   Request: {file_list_data}")
     
     # Call manufacturer API
     result = manufacturer_api.get_file_list(file_list_data)
     
-    if result.get("code") == 200 and result.get("data"):
-        media_list = result.get("data", {}).get("mediaList", [])
+    logger.info(f"   Vendor API response code: {result.get('code')}")
+    logger.info(f"   Vendor API response: {result}")
+    
+    if result.get("code") == 200:
+        data = result.get("data", {})
+        logger.info(f"   Response data keys: {data.keys() if isinstance(data, dict) else 'Not a dict'}")
         
-        # Convert to simpler format with start/end times
-        segments = []
-        for media in media_list:
-            if media.get("startTime") and media.get("endTime"):
-                segments.append({
-                    "start_time": media["startTime"],  # Unix timestamp
-                    "end_time": media["endTime"],      # Unix timestamp
-                    "channel": media.get("channel", request.channel),
-                    "file_size": media.get("fileSize", 0)
-                })
+        # Check different possible response structures
+        media_list = None
+        if isinstance(data, dict):
+            # Try different possible keys
+            media_list = data.get("mediaList") or data.get("media_list") or data.get("files") or data.get("list")
         
-        logger.info(f"✅ Found {len(segments)} video segments")
-        
-        return {
-            "success": True,
-            "device_id": request.device_id,
-            "date": request.date,
-            "segments": segments,
-            "total": len(segments)
-        }
+        if media_list:
+            logger.info(f"   Found media_list with {len(media_list)} items")
+            logger.info(f"   First item sample: {media_list[0] if media_list else 'Empty'}")
+            
+            # Convert to simpler format with start/end times
+            segments = []
+            for media in media_list:
+                # Handle different possible field names
+                start_time = media.get("startTime") or media.get("start_time") or media.get("start")
+                end_time = media.get("endTime") or media.get("end_time") or media.get("end")
+                
+                if start_time and end_time:
+                    segments.append({
+                        "start_time": int(start_time),  # Ensure it's an int
+                        "end_time": int(end_time),      # Ensure it's an int
+                        "channel": media.get("channel", request.channel),
+                        "file_size": media.get("fileSize") or media.get("file_size") or 0
+                    })
+            
+            logger.info(f"✅ Found {len(segments)} video segments")
+            
+            return {
+                "success": True,
+                "device_id": request.device_id,
+                "date": request.date,
+                "segments": segments,
+                "total": len(segments)
+            }
+        else:
+            logger.warning(f"⚠️ No mediaList found in response data")
+            logger.warning(f"   Data structure: {data}")
     else:
-        # No files found or error
-        return {
-            "success": True,
-            "device_id": request.device_id,
-            "date": request.date,
-            "segments": [],
-            "total": 0
+        error_msg = result.get("message") or result.get("error") or "Unknown error"
+        logger.error(f"❌ Vendor API error: {error_msg}")
+    
+    # No files found or error
+    return {
+        "success": True,
+        "device_id": request.device_id,
+        "date": request.date,
+        "segments": [],
+        "total": 0,
+        "debug": {
+            "vendor_code": result.get("code"),
+            "vendor_message": result.get("message"),
+            "has_data": bool(result.get("data"))
         }
+    }
 
 @router.get("/files/{device_id}")
 def get_media_files(
