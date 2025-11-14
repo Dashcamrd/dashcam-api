@@ -336,16 +336,28 @@ def get_file_list(
         # Check different possible response structures
         media_list = None
         if isinstance(data, dict):
-            # Try different possible keys
-            media_list = data.get("mediaList") or data.get("media_list") or data.get("files") or data.get("list")
+            # Try different possible keys - vendor uses "mediaFileLists"
+            media_list = (
+                data.get("mediaFileLists") or  # Vendor API actual key
+                data.get("mediaList") or 
+                data.get("media_list") or 
+                data.get("files") or 
+                data.get("list")
+            )
         
         if media_list:
             logger.info(f"   Found media_list with {len(media_list)} items")
             logger.info(f"   First item sample: {media_list[0] if media_list else 'Empty'}")
             
             # Convert to simpler format with start/end times
+            # Filter by requested channel if specified
             segments = []
             for media in media_list:
+                # Filter by channel if specified (vendor returns all channels)
+                media_channel = media.get("channel")
+                if request.channel and media_channel != request.channel:
+                    continue  # Skip if channel doesn't match
+                
                 # Handle different possible field names
                 start_time = media.get("startTime") or media.get("start_time") or media.get("start")
                 end_time = media.get("endTime") or media.get("end_time") or media.get("end")
@@ -354,7 +366,7 @@ def get_file_list(
                     segments.append({
                         "start_time": int(start_time),  # Ensure it's an int
                         "end_time": int(end_time),      # Ensure it's an int
-                        "channel": media.get("channel", request.channel),
+                        "channel": media_channel or request.channel,
                         "file_size": media.get("fileSize") or media.get("file_size") or 0
                     })
             
