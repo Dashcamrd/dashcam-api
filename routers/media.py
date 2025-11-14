@@ -29,6 +29,11 @@ class IntercomRequest(BaseModel):
     device_id: str
     channel: Optional[int] = 1
 
+class FileListRequest(BaseModel):
+    device_id: str
+    date: str  # format: "2024-01-15"
+    channel: Optional[int] = 1
+
 def verify_device_access(device_id: str, current_user: dict) -> bool:
     """Verify that the current user has access to the specified device"""
     user_devices = get_user_devices(current_user["user_id"])
@@ -274,6 +279,83 @@ def stop_intercom(
             status_code=400,
             detail=f"Failed to stop intercom: {result.get('message', 'Unknown error')}"
         )
+
+@router.post("/file-list")
+def get_file_list(
+    request: FileListRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get list of actual video file segments available for a specific date.
+    Returns the time periods where video recordings exist.
+    """
+    # Verify user has access to this device
+    if not verify_device_access(request.device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    from datetime import datetime, timedelta
+    
+    # Parse date and create start/end of day timestamps
+    try:
+        date_obj = datetime.strptime(request.date, "%Y-%m-%d")
+        start_of_day = date_obj.replace(hour=0, minute=0, second=0)
+        end_of_day = date_obj.replace(hour=23, minute=59, second=59)
+        
+        # Convert to Unix timestamps
+        start_timestamp = int(start_of_day.timestamp())
+        end_timestamp = int(end_of_day.timestamp())
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Build request for manufacturer API
+    file_list_data = {
+        "deviceId": request.device_id,
+        "channel": request.channel,
+        "startTime": start_timestamp,
+        "endTime": end_timestamp,
+        "mediaType": 2,  # 2=Video
+        "streamType": 0,  # 0=all
+        "storageType": 0  # 0=all
+    }
+    
+    logger.info(f"📹 Getting file list for {request.device_id} on {request.date}")
+    
+    # Call manufacturer API
+    result = manufacturer_api.get_file_list(file_list_data)
+    
+    if result.get("code") == 200 and result.get("data"):
+        media_list = result.get("data", {}).get("mediaList", [])
+        
+        # Convert to simpler format with start/end times
+        segments = []
+        for media in media_list:
+            if media.get("startTime") and media.get("endTime"):
+                segments.append({
+                    "start_time": media["startTime"],  # Unix timestamp
+                    "end_time": media["endTime"],      # Unix timestamp
+                    "channel": media.get("channel", request.channel),
+                    "file_size": media.get("fileSize", 0)
+                })
+        
+        logger.info(f"✅ Found {len(segments)} video segments")
+        
+        return {
+            "success": True,
+            "device_id": request.device_id,
+            "date": request.date,
+            "segments": segments,
+            "total": len(segments)
+        }
+    else:
+        # No files found or error
+        return {
+            "success": True,
+            "device_id": request.device_id,
+            "date": request.date,
+            "segments": [],
+            "total": 0
+        }
 
 @router.get("/files/{device_id}")
 def get_media_files(

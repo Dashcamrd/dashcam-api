@@ -484,6 +484,11 @@ class ManufacturerAPIService:
         """End intercom"""
         return self._make_request("media_end_intercom", intercom_data)
     
+    # File list endpoint
+    def get_file_list(self, file_list_data: Dict) -> Dict[str, Any]:
+        """Get list of available video file segments"""
+        return self._make_request("media_get_file_list", file_list_data)
+    
     # Statistics endpoints
     def get_vehicle_details(self, query_data: Dict) -> Dict[str, Any]:
         """Query vehicle details"""
