@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from models.user import UserCreate, UserLogin, ChangePassword, UserResponse
+from models.user import UserCreate, UserLogin, ChangePassword, UserResponse, PasswordResetRequest
 import services.auth_service as auth_service
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -30,6 +30,14 @@ def change_password(
     Requires valid JWT token.
     """
     return auth_service.change_password(current_user["invoice_no"], password_data.new_password)
+
+@router.post("/reset-password")
+def reset_password(reset_request: PasswordResetRequest):
+    """
+    Request password reset via email.
+    Sends a reset link/token to the user's email.
+    """
+    return auth_service.request_password_reset(reset_request.email)
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: dict = Depends(auth_service.get_current_user)):

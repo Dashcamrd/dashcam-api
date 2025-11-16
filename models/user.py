@@ -25,3 +25,6 @@ class UserResponse(BaseModel):
 
 class ChangePassword(BaseModel):
     new_password: str
+
+class PasswordResetRequest(BaseModel):
+    email: str

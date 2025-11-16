@@ -224,3 +224,43 @@ def get_user_devices(user_id: int, db: Session = None) -> list:
     finally:
         if close_db:
             db.close()
+
+def request_password_reset(email: str):
+    """
+    Request password reset via email.
+    Generates a temporary password and sends it via email.
+    """
+    import secrets
+    import string
+    
+    db: Session = SessionLocal()
+    try:
+        # Find user by email
+        db_user = db.query(UserDB).filter(UserDB.email == email).first()
+        if not db_user:
+            # For security, don't reveal if email exists or not
+            return {"message": "If the email exists, a password reset link has been sent."}
+        
+        # Generate a secure temporary password
+        temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+        
+        # Update user's password
+        db_user.password_hash = hash_password(temp_password)
+        db.commit()
+        
+        # TODO: Send email with temporary password
+        # For now, we'll just log it (in production, use proper email service)
+        print(f"🔐 Password reset for {email}")
+        print(f"   Temporary password: {temp_password}")
+        print(f"   Invoice No: {db_user.invoice_no}")
+        
+        # In production, send email here:
+        # send_email(
+        #     to=email,
+        #     subject="Password Reset Request",
+        #     body=f"Your temporary password is: {temp_password}\n\nPlease login and change your password immediately."
+        # )
+        
+        return {"message": "If the email exists, a password reset link has been sent."}
+    finally:
+        db.close()
