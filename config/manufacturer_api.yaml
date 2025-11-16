@@ -172,13 +172,13 @@ profiles:
           required: [deviceId, channels, startTime, endTime]
 
       media_two_way_intercom:
-        path: /api/v1/media/twoWayIntercom
+        path: /api/v1/media/deviceTwoWayVoip
         method: POST
         request:
           required: [deviceId, channel]
 
       media_end_intercom:
-        path: /api/v1/media/endIntercom
+        path: /api/v1/media/closeDeviceTwoWayVoip
         method: POST
         request:
           required: [deviceId, channel]
