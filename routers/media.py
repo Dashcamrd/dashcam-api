@@ -229,6 +229,9 @@ def start_intercom(
     # Call manufacturer API
     result = manufacturer_api.start_intercom(intercom_data)
     
+    # Log full response for debugging
+    logger.info(f"[{correlation_id}] Manufacturer API response: {result}")
+    
     # Check if successful
     if result.get("code") == 200 and result.get("data", {}).get("errorCode") == 200:
         data = result.get("data", {})
@@ -241,10 +244,17 @@ def start_intercom(
             "push_url": data.get("pushUrl"),  # WebRTC URL for sending user audio
         }
     else:
-        error_desc = result.get("data", {}).get("errorDesc", result.get("message", "Unknown error"))
+        # Extract detailed error information
+        data = result.get("data", {})
+        error_code = data.get("errorCode", result.get("code"))
+        error_desc = data.get("errorDesc", result.get("message", "Unknown error"))
+        
+        logger.error(f"[{correlation_id}] Intercom failed - Code: {error_code}, Message: {error_desc}")
+        logger.error(f"[{correlation_id}] Full response: {result}")
+        
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to start intercom: {error_desc}"
+            detail=f"Failed to start intercom (code {error_code}): {error_desc}"
         )
 
 @router.post("/intercom/stop")
@@ -267,6 +277,9 @@ def stop_intercom(
     # Call manufacturer API
     result = manufacturer_api.end_intercom(intercom_data)
     
+    # Log full response for debugging
+    logger.info(f"[{correlation_id}] Manufacturer API response: {result}")
+    
     # Check if successful
     if result.get("code") == 200:
         return {
@@ -275,9 +288,17 @@ def stop_intercom(
             "device_id": request.device_id
         }
     else:
+        # Extract detailed error information
+        data = result.get("data", {})
+        error_code = data.get("errorCode", result.get("code"))
+        error_desc = data.get("errorDesc", result.get("message", "Unknown error"))
+        
+        logger.error(f"[{correlation_id}] Stop intercom failed - Code: {error_code}, Message: {error_desc}")
+        logger.error(f"[{correlation_id}] Full response: {result}")
+        
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to stop intercom: {result.get('message', 'Unknown error')}"
+            detail=f"Failed to stop intercom (code {error_code}): {error_desc}"
         )
 
 @router.post("/file-list")
