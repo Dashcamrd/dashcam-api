@@ -228,10 +228,15 @@ def get_user_devices(user_id: int, db: Session = None) -> list:
 def request_password_reset(email: str):
     """
     Request password reset via email.
-    Generates a temporary password and sends it via email.
+    Generates a temporary password and sends it via email using Resend.
+    
+    Required environment variables:
+    - RESEND_API_KEY: Your Resend API key from https://resend.com
+    - FROM_EMAIL: Your verified sender email (e.g., noreply@yourdomain.com)
     """
     import secrets
     import string
+    import resend
     
     db: Session = SessionLocal()
     try:
@@ -248,18 +253,40 @@ def request_password_reset(email: str):
         db_user.password_hash = hash_password(temp_password)
         db.commit()
         
-        # TODO: Send email with temporary password
-        # For now, we'll just log it (in production, use proper email service)
-        print(f"🔐 Password reset for {email}")
-        print(f"   Temporary password: {temp_password}")
-        print(f"   Invoice No: {db_user.invoice_no}")
-        
-        # In production, send email here:
-        # send_email(
-        #     to=email,
-        #     subject="Password Reset Request",
-        #     body=f"Your temporary password is: {temp_password}\n\nPlease login and change your password immediately."
-        # )
+        # Send email using Resend
+        try:
+            resend.api_key = os.getenv("RESEND_API_KEY")
+            from_email = os.getenv("FROM_EMAIL", "noreply@dashcamrd.com")
+            
+            # Send password reset email
+            resend.Emails.send({
+                "from": from_email,
+                "to": email,
+                "subject": "Password Reset Request - Dashcam App",
+                "html": f"""
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #C93A2B;">Password Reset Request</h2>
+                        <p>Hello {db_user.name},</p>
+                        <p>You requested a password reset for your Dashcam account.</p>
+                        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                            <p style="margin: 0;"><strong>Invoice Number:</strong> {db_user.invoice_no}</p>
+                            <p style="margin: 10px 0;"><strong>Temporary Password:</strong> <code style="background-color: #fff; padding: 5px 10px; border-radius: 3px; font-size: 16px;">{temp_password}</code></p>
+                        </div>
+                        <p><strong>⚠️ Important:</strong> Please login and change your password immediately for security.</p>
+                        <p>If you didn't request this password reset, please ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px;">This is an automated email. Please do not reply.</p>
+                    </div>
+                """
+            })
+            
+            print(f"✅ Password reset email sent to {email}")
+            
+        except Exception as email_error:
+            # Log email error but don't reveal to user
+            print(f"❌ Failed to send email to {email}: {email_error}")
+            # Also log to console for debugging (remove in production)
+            print(f"🔐 Backup - Temporary password for {email}: {temp_password}")
         
         return {"message": "If the email exists, a password reset link has been sent."}
     finally:
