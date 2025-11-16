@@ -256,7 +256,7 @@ def request_password_reset(email: str):
         # Send email using Resend
         try:
             resend.api_key = os.getenv("RESEND_API_KEY")
-            from_email = os.getenv("FROM_EMAIL", "noreply@dashcamrd.com")
+            from_email = os.getenv("FROM_EMAIL", "noreply@app.dashcamrd.com")
             
             # Send password reset email
             resend.Emails.send({
