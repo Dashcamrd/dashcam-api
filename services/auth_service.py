@@ -274,12 +274,12 @@ def request_password_reset(email: str):
             response = resend.Emails.send({
                 "from": from_email,
                 "to": email,
-                "subject": "Password Reset Request - Dashcam App",
+                "subject": "Password Reset Request - Road App",
                 "html": f"""
                     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                         <h2 style="color: #C93A2B;">Password Reset Request</h2>
                         <p>Hello {db_user.name},</p>
-                        <p>You requested a password reset for your Dashcam account.</p>
+                        <p>You requested a password reset for your Road App account.</p>
                         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
                             <p style="margin: 0;"><strong>Invoice Number:</strong> {db_user.invoice_no}</p>
                             <p style="margin: 10px 0;"><strong>Temporary Password:</strong> <code style="background-color: #fff; padding: 5px 10px; border-radius: 3px; font-size: 16px;">{temp_password}</code></p>
