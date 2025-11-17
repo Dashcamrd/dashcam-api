@@ -237,6 +237,11 @@ def request_password_reset(email: str):
     import secrets
     import string
     import resend
+    import os
+    from dotenv import load_dotenv
+    
+    # Ensure environment variables are loaded
+    load_dotenv()
     
     db: Session = SessionLocal()
     try:
@@ -255,11 +260,18 @@ def request_password_reset(email: str):
         
         # Send email using Resend
         try:
-            resend.api_key = os.getenv("RESEND_API_KEY")
+            # Get API key and sender email from environment
+            api_key = os.getenv("RESEND_API_KEY")
             from_email = os.getenv("FROM_EMAIL", "noreply@app.dashcamrd.com")
             
+            if not api_key:
+                raise Exception("RESEND_API_KEY environment variable not set")
+            
+            # Set Resend API key
+            resend.api_key = api_key
+            
             # Send password reset email
-            resend.Emails.send({
+            response = resend.Emails.send({
                 "from": from_email,
                 "to": email,
                 "subject": "Password Reset Request - Dashcam App",
@@ -280,12 +292,13 @@ def request_password_reset(email: str):
                 """
             })
             
-            print(f"✅ Password reset email sent to {email}")
+            print(f"✅ Password reset email sent to {email} (ID: {response.get('id', 'N/A')})")
             
         except Exception as email_error:
             # Log email error but don't reveal to user
-            print(f"❌ Failed to send email to {email}: {email_error}")
-            # Also log to console for debugging (remove in production)
+            print(f"❌ Failed to send email to {email}: {str(email_error)}")
+            # In production, you might want to log this to a monitoring service
+            # For now, print temporary password as backup
             print(f"🔐 Backup - Temporary password for {email}: {temp_password}")
         
         return {"message": "If the email exists, a password reset link has been sent."}
