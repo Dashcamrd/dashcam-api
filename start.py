@@ -16,18 +16,26 @@ def run_database_migrations():
         from database import engine
         from sqlalchemy import text, inspect
         
-        # Check if device_id column exists
         inspector = inspect(engine)
         columns = [col['name'] for col in inspector.get_columns('users')]
         
+        # Migration 1: Add device_id column
         if 'device_id' not in columns:
             print("   Adding device_id column to users table...")
             with engine.connect() as connection:
                 connection.execute(text("ALTER TABLE users ADD COLUMN device_id VARCHAR(100) NULL"))
                 connection.commit()
             print("✅ Added device_id column to users table")
-        else:
-            print("✅ Database schema is up to date")
+            columns.append('device_id')
+        
+        # Migration 2: Add phone column
+        if 'phone' not in columns:
+            print("   Adding phone column to users table...")
+            with engine.connect() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL"))
+                connection.commit()
+            print("✅ Added phone column to users table")
+            columns.append('phone')
         
         print("✅ Database migrations completed")
     except Exception as e:

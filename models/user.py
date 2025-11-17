@@ -28,3 +28,17 @@ class ChangePassword(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: str
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+class ProfileResponse(BaseModel):
+    invoice_no: str
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
