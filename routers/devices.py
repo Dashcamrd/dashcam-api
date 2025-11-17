@@ -26,6 +26,10 @@ class DeviceConfigRequest(BaseModel):
     device_id: str
     config_type: Optional[str] = "general"
 
+class DeviceRenameRequest(BaseModel):
+    device_id: str
+    new_name: str
+
 @router.get("/")
 def list_user_devices(current_user: dict = Depends(get_current_user)):
     """
@@ -359,6 +363,48 @@ def add_device_to_user(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error adding device: {str(e)}")
+    finally:
+        db.close()
+
+@router.put("/rename")
+def rename_device(
+    rename_request: DeviceRenameRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Rename a device. Only the user who owns the device can rename it.
+    """
+    db = SessionLocal()
+    try:
+        # Find the device
+        device = db.query(DeviceDB).filter(
+            DeviceDB.device_id == rename_request.device_id
+        ).first()
+        
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # Check if device belongs to current user
+        if device.assigned_user_id != current_user["user_id"]:
+            raise HTTPException(status_code=403, detail="You don't have permission to rename this device")
+        
+        # Update device name
+        device.name = rename_request.new_name
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Device renamed successfully",
+            "device": {
+                "device_id": device.device_id,
+                "name": device.name
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error renaming device: {str(e)}")
     finally:
         db.close()
 
