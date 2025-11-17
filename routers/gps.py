@@ -366,11 +366,24 @@ def get_user_devices_with_gps_status(
                 last_online_time = gps_dto.timestamp_ms
                 timestamp_for_relative = gps_dto.timestamp_ms
             
+            # Fetch ACC status from device states endpoint (same source as main screen)
+            acc_status = False  # Default to OFF
+            try:
+                states_result = manufacturer_api.get_device_states(device_data)
+                if states_result and 'data' in states_result:
+                    states_dto = DeviceAdapter.parse_device_states_response(states_result, device.device_id, correlation_id)
+                    if states_dto:
+                        acc_status = states_dto.acc_on
+            except Exception as acc_error:
+                logger.warning(f"Failed to fetch ACC status for device {device.device_id}: {acc_error}")
+                # Keep default acc_status = False
+            
             devices_with_gps.append({
                 "device_id": device.device_id,
                 "name": device.name,
                 "status": device.status,
                 "gps_status": gps_status,
+                "acc_status": acc_status,  # Use device states endpoint (same as main screen)
                 "last_location": {
                     "latitude": latitude,
                     "longitude": longitude,
@@ -387,6 +400,7 @@ def get_user_devices_with_gps_status(
                 "name": device.name,
                 "status": device.status,
                 "gps_status": "offline",
+                "acc_status": False,  # Default to OFF when GPS fetch fails
                 "last_location": {
                     "latitude": None,
                     "longitude": None,
