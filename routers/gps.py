@@ -4,6 +4,7 @@ GPS Router - Handles GPS tracking, location, and history
 from fastapi import APIRouter, Depends, HTTPException, Query
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
+from services.geocoding_service import GeocodingService
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime
@@ -350,14 +351,9 @@ def get_user_devices_with_gps_status(
             # Extract location info from DTO
             latitude = gps_dto.latitude if gps_dto else None
             longitude = gps_dto.longitude if gps_dto else None
-            location_name = "Location unavailable"
             
-            if latitude and longitude:
-                # Generate human-readable location name (same logic as map page)
-                if 5.2 <= latitude <= 5.4 and 100.2 <= longitude <= 100.4:
-                    location_name = "Batu Maung, Malaysia"
-                else:
-                    location_name = f"{latitude:.6f}, {longitude:.6f}"
+            # Use geocoding service to get real location name from coordinates
+            location_name = GeocodingService.get_location_name(latitude, longitude)
             
             # Get timestamp for relative time
             last_online_time = None
