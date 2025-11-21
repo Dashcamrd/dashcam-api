@@ -120,3 +120,11 @@ def update_user_profile(
         raise HTTPException(status_code=500, detail=f"Error updating profile: {str(e)}")
     finally:
         db.close()
+
+@router.delete("/account")
+def delete_account(current_user: dict = Depends(auth_service.get_current_user)):
+    """
+    Delete the current user's account permanently.
+    This action cannot be undone. All user data will be deleted.
+    """
+    return auth_service.delete_user_account(current_user["user_id"])

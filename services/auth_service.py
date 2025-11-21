@@ -225,6 +225,44 @@ def get_user_devices(user_id: int, db: Session = None) -> list:
         if close_db:
             db.close()
 
+def delete_user_account(user_id: int, db: Session = None):
+    """
+    Delete a user account and all associated data.
+    This permanently removes the user from the database.
+    """
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    else:
+        close_db = False
+    
+    try:
+        # Get user
+        db_user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        if not db_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Unlink devices from user (set assigned_user_id to None)
+        from models.device_db import DeviceDB
+        devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
+        for device in devices:
+            device.assigned_user_id = None
+        db.commit()
+        
+        # Delete user
+        db.delete(db_user)
+        db.commit()
+        
+        return {"message": "Account deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting account: {str(e)}")
+    finally:
+        if close_db:
+            db.close()
+
 def request_password_reset(email: str):
     """
     Request password reset via email.
