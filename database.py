@@ -22,6 +22,13 @@ if INTERNAL_DATABASE_URL:
     DATABASE_URL = INTERNAL_DATABASE_URL
     print(f"🔗 Using internal database connection")
 
+# Add SSL parameters to PostgreSQL URL if connecting to Render
+if DATABASE_URL and DATABASE_URL.startswith("postgresql://") and ".render.com" in DATABASE_URL:
+    # Add sslmode parameter to the URL
+    separator = "?" if "?" not in DATABASE_URL else "&"
+    DATABASE_URL = f"{DATABASE_URL}{separator}sslmode=require"
+    print("🔒 SSL enabled for PostgreSQL connection")
+
 # Create engine with connection pool settings
 connect_args = {"connect_timeout": 10}
 if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
@@ -33,9 +40,6 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
         "keepalives_interval": 10,
         "keepalives_count": 5,
     }
-    # Only add SSL for external connections (contains .render.com)
-    if ".render.com" in DATABASE_URL:
-        connect_args["sslmode"] = "require"
 
 engine = create_engine(
     DATABASE_URL,

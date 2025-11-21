@@ -2,12 +2,14 @@
 Media Router - Handles video preview, playback, and file management
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
 import logging
 import uuid
+import httpx
 from adapters import MediaAdapter
 
 logger = logging.getLogger(__name__)
@@ -450,5 +452,52 @@ def get_media_files(
             "channel": channel
         }
     }
+
+@router.get("/proxy")
+async def proxy_video_stream(
+    url: str = Query(..., description="Video stream URL to proxy"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Proxy video stream through backend to fix mixed content issues on web.
+    This endpoint streams HTTP video URLs through HTTPS to avoid browser blocking.
+    """
+    try:
+        # Validate URL (basic security check)
+        if not url.startswith(('http://', 'https://')):
+            raise HTTPException(status_code=400, detail="Invalid URL format")
+        
+        # Use httpx for async streaming
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with client.stream('GET', url) as response:
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch video stream: {response.status_code}"
+                    )
+                
+                # Stream the video content
+                async def generate():
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+                
+                # Determine content type from response headers
+                content_type = response.headers.get('content-type', 'video/mp4')
+                
+                return StreamingResponse(
+                    generate(),
+                    media_type=content_type,
+                    headers={
+                        'Cache-Control': 'no-cache',
+                        'X-Accel-Buffering': 'no',
+                    }
+                )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Video stream timeout")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to connect to video stream: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error proxying video stream: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

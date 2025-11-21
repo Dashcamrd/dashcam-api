@@ -9,6 +9,7 @@ python-multipart
 pydantic
 pydantic-settings
 requests
+httpx
 python-dotenv
 cryptography
 PyYAML

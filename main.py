@@ -5,8 +5,13 @@ from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
 
-# Create all tables
-Base.metadata.create_all(bind=engine)
+# Create all tables (with error handling for connection issues)
+try:
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database tables initialized successfully")
+except Exception as e:
+    print(f"⚠️  Warning: Could not initialize database tables: {e}")
+    print("   Tables will be created on first database access")
 
 app = FastAPI(
     title="Dashcam Management Platform API",
