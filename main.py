@@ -54,5 +54,15 @@ def root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Health check endpoint for Railway deployment"""
+    try:
+        # Quick database connectivity check (non-blocking)
+        from database import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        # Return ok even if database check fails (app is still running)
+        return {"status": "ok", "database": "disconnected", "message": str(e)}
 
