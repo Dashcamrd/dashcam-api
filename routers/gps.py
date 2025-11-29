@@ -88,7 +88,7 @@ class DetailedTrackRequest(BaseModel):
 
 def verify_device_access(device_id: str, current_user: dict) -> bool:
     """Verify that the current user has access to the specified device"""
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     user_device_ids = [device.device_id for device in user_devices]
     return device_id in user_device_ids
 
@@ -322,7 +322,7 @@ def get_user_devices_with_gps_status(
     """
     Get all devices assigned to the current user with their GPS status.
     """
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     
     if not user_devices:
         return {
