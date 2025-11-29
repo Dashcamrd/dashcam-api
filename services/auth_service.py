@@ -82,7 +82,8 @@ def register_user(user: UserCreate):
             password_hash=hash_password(user.password),
             name=user.name,
             email=user.email,
-            device_id=user.device_id if user.device_id else None
+            device_id=user.device_id if user.device_id else None,
+            is_admin=False  # Default to regular user
         )
         db.add(db_user)
         db.commit()
@@ -92,7 +93,8 @@ def register_user(user: UserCreate):
         token = create_access_token({
             "sub": db_user.invoice_no,
             "user_id": db_user.id,
-            "name": db_user.name
+            "name": db_user.name,
+            "is_admin": db_user.is_admin
         })
         
         return {
@@ -103,7 +105,8 @@ def register_user(user: UserCreate):
                 "invoice_no": db_user.invoice_no,
                 "name": db_user.name,
                 "email": db_user.email,
-                "device_id": db_user.device_id
+                "device_id": db_user.device_id,
+                "is_admin": db_user.is_admin
             }
         }
     finally:
@@ -121,7 +124,8 @@ def login_user(user: UserLogin):
         token = create_access_token({
             "sub": db_user.invoice_no,
             "user_id": db_user.id,
-            "name": db_user.name
+            "name": db_user.name,
+            "is_admin": db_user.is_admin
         })
         return {
             "access_token": token, 
@@ -130,7 +134,8 @@ def login_user(user: UserLogin):
                 "id": db_user.id,
                 "invoice_no": db_user.invoice_no,
                 "name": db_user.name,
-                "email": db_user.email
+                "email": db_user.email,
+                "is_admin": db_user.is_admin
             }
         }
     finally:
@@ -179,7 +184,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
         return {
             "invoice_no": invoice_no,
             "user_id": user_id,
-            "name": payload.get("name")
+            "name": payload.get("name"),
+            "is_admin": payload.get("is_admin", False)
         }
     except JWTError:
         raise HTTPException(
@@ -188,8 +194,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-def get_user_devices(user_id: int, db: Session = None) -> list:
-    """Get devices assigned to a user"""
+def get_user_devices(user_id: int, is_admin: bool = False, db: Session = None) -> list:
+    """Get devices assigned to a user. If admin, return all devices."""
     if db is None:
         db = SessionLocal()
         close_db = True
@@ -198,7 +204,14 @@ def get_user_devices(user_id: int, db: Session = None) -> list:
     
     try:
         from models.device_db import DeviceDB
-        devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
+        
+        if is_admin:
+            # Admin sees ALL devices
+            devices = db.query(DeviceDB).all()
+        else:
+            # Regular user sees only assigned devices
+            devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
+            
         return devices
     finally:
         if close_db:

@@ -29,7 +29,7 @@ def list_user_devices(current_user: dict = Depends(get_current_user)):
     Get all devices assigned to the current user.
     Returns device information from local database plus status from manufacturer API.
     """
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     
     if not user_devices:
         return {
@@ -88,7 +88,7 @@ def get_device_details(
     Only devices assigned to the current user are accessible.
     """
     # Verify user has access to this device
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     user_device_ids = [device.device_id for device in user_devices]
     
     if device_id not in user_device_ids:
@@ -145,7 +145,7 @@ def get_device_config(
     Only devices assigned to the current user are accessible.
     """
     # Verify user has access to this device
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     user_device_ids = [device.device_id for device in user_devices]
     
     if device_id not in user_device_ids:
@@ -177,7 +177,7 @@ def get_all_device_statuses(current_user: dict = Depends(get_current_user)):
     """
     Get real-time status for all user devices.
     """
-    user_devices = get_user_devices(current_user["user_id"])
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     user_device_ids = [device.device_id for device in user_devices]
     
     if not user_device_ids:
