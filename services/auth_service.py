@@ -63,6 +63,7 @@ def create_user(user_data: dict, db: Session = None):
 
 def register_user(user: UserCreate):
     """Register a new user with invoice number, device ID, name, email, and password"""
+    from models.device_db import DeviceDB
     db: Session = SessionLocal()
     try:
         # Check if invoice number already exists
@@ -88,6 +89,26 @@ def register_user(user: UserCreate):
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
+        
+        # Link device to user if device_id is provided
+        if user.device_id:
+            device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
+            if device:
+                # Device exists - link it to the user
+                device.assigned_user_id = db_user.id
+                db.commit()
+            else:
+                # Device doesn't exist - create it
+                new_device = DeviceDB(
+                    device_id=user.device_id,
+                    name=f"Device {user.device_id}",
+                    assigned_user_id=db_user.id,
+                    org_id="ORG001",  # Default org
+                    status="offline",
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_device)
+                db.commit()
         
         # Create access token for immediate login
         token = create_access_token({
@@ -216,3 +237,121 @@ def get_user_devices(user_id: int, is_admin: bool = False, db: Session = None) -
     finally:
         if close_db:
             db.close()
+
+def delete_user_account(user_id: int, db: Session = None):
+    """
+    Delete a user account and all associated data.
+    This permanently removes the user from the database.
+    """
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    else:
+        close_db = False
+    
+    try:
+        # Get user
+        db_user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        if not db_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Unlink devices from user (set assigned_user_id to None)
+        from models.device_db import DeviceDB
+        devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
+        for device in devices:
+            device.assigned_user_id = None
+        db.commit()
+        
+        # Delete user
+        db.delete(db_user)
+        db.commit()
+        
+        return {"message": "Account deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting account: {str(e)}")
+    finally:
+        if close_db:
+            db.close()
+
+def request_password_reset(email: str):
+    """
+    Request password reset via email.
+    Generates a temporary password and sends it via email using Resend.
+    
+    Required environment variables:
+    - RESEND_API_KEY: Your Resend API key from https://resend.com
+    - FROM_EMAIL: Your verified sender email (e.g., noreply@yourdomain.com)
+    """
+    import secrets
+    import string
+    import resend
+    import os
+    from dotenv import load_dotenv
+    
+    # Ensure environment variables are loaded
+    load_dotenv()
+    
+    db: Session = SessionLocal()
+    try:
+        # Find user by email
+        db_user = db.query(UserDB).filter(UserDB.email == email).first()
+        if not db_user:
+            # For security, don't reveal if email exists or not
+            return {"message": "If the email exists, a password reset link has been sent."}
+        
+        # Generate a secure temporary password
+        temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
+        
+        # Update user's password
+        db_user.password_hash = hash_password(temp_password)
+        db.commit()
+        
+        # Send email using Resend
+        try:
+            # Get API key and sender email from environment
+            api_key = os.getenv("RESEND_API_KEY")
+            from_email = os.getenv("FROM_EMAIL", "noreply@app.dashcamrd.com")
+            
+            if not api_key:
+                raise Exception("RESEND_API_KEY environment variable not set")
+            
+            # Set Resend API key
+            resend.api_key = api_key
+            
+            # Send password reset email
+            response = resend.Emails.send({
+                "from": from_email,
+                "to": email,
+                "subject": "Password Reset Request - Road App",
+                "html": f"""
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #C93A2B;">Password Reset Request</h2>
+                        <p>Hello {db_user.name},</p>
+                        <p>You requested a password reset for your Road App account.</p>
+                        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                            <p style="margin: 0;"><strong>Invoice Number:</strong> {db_user.invoice_no}</p>
+                            <p style="margin: 10px 0;"><strong>Temporary Password:</strong> <code style="background-color: #fff; padding: 5px 10px; border-radius: 3px; font-size: 16px;">{temp_password}</code></p>
+                        </div>
+                        <p><strong>⚠️ Important:</strong> Please login and change your password immediately for security.</p>
+                        <p>If you didn't request this password reset, please ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px;">This is an automated email. Please do not reply.</p>
+                    </div>
+                """
+            })
+            
+            print(f"✅ Password reset email sent to {email} (ID: {response.get('id', 'N/A')})")
+            
+        except Exception as email_error:
+            # Log email error but don't reveal to user
+            print(f"❌ Failed to send email to {email}: {str(email_error)}")
+            # In production, you might want to log this to a monitoring service
+            # For now, print temporary password as backup
+            print(f"🔐 Backup - Temporary password for {email}: {temp_password}")
+        
+        return {"message": "If the email exists, a password reset link has been sent."}
+    finally:
+        db.close()

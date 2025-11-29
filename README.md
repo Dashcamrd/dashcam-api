@@ -9,6 +9,48 @@ A comprehensive multi-tenant dashcam management platform that integrates with ma
 - **Integration**: Manufacturer MDVR API (52 endpoints)
 - **Multi-tenancy**: Users only see their assigned devices
 
+### Adapter Architecture
+
+The platform uses a **clean adapter pattern** to decouple vendor API specifics from business logic:
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
+│   Routers   │────▶│   Adapters   │────▶│   Service   │────▶│ Vendor API   │
+│  (FastAPI)  │     │  (Mapping)   │     │  (Config)   │     │  (External)  │
+└─────────────┘     └──────────────┘     └─────────────┘     └──────────────┘
+     │                     │                     │
+     │                     │                     │
+     └─────────────────────┴─────────────────────┘
+           Stable DTOs (Pydantic Models)
+```
+
+**Key Components:**
+
+1. **Adapters** (`adapters/`): Transform vendor API responses → stable DTOs
+   - `GPSAdapter`: GPS location and tracking data
+   - `DeviceAdapter`: Device states and lists
+   - `MediaAdapter`: Video preview/playback streams
+   - `TaskAdapter`: Text delivery and task management
+   - `StatisticsAdapter`: Alarms and vehicle statistics
+
+2. **DTOs** (`models/dto.py`): Stable data structures independent of vendor format
+   - Normalized field names (e.g., `device_id` instead of `deviceId`)
+   - Consistent types (e.g., timestamps always in milliseconds)
+   - Coordinate conversion (1e6 scaled → decimal degrees)
+
+3. **Config-Driven Service** (`services/manufacturer_api_service.py`):
+   - Endpoint definitions in `config/manufacturer_api.yaml`
+   - Request validation and defaults from config
+   - Automatic token management with retry logic
+   - Correlation IDs for request tracing
+
+**Benefits:**
+- ✅ Vendor API changes isolated to adapters
+- ✅ Type-safe data structures (Pydantic validation)
+- ✅ Consistent error handling across endpoints
+- ✅ Easy to test and maintain
+- ✅ Request tracing with correlation IDs
+
 ## 📋 Features
 
 ### Authentication & User Management
@@ -256,6 +298,40 @@ The system uses manufacturer API error codes plus custom codes:
 
 ## 🤝 Development
 
+### Testing Manufacturer API Endpoints (CLI Tool)
+To test individual manufacturer API endpoints and verify their contracts without affecting the running application, use the `test_manufacturer_api.py` CLI script. This tool uses the same `ManufacturerAPIService` and configuration as the main application.
+
+**Usage:**
+```bash
+cd pythonProject
+python scripts/test_manufacturer_api.py --named <endpoint_name> --data '{"key": "value"}' [--method <HTTP_METHOD>]
+```
+
+- `<endpoint_name>`: The internal name of the endpoint as defined in `config/manufacturer_api.yaml` (e.g., `login`, `gps_search_v1`).
+- `--data`: A JSON string representing the request body.
+- `--method`: (Optional) Override the HTTP method (e.g., `GET`, `POST`). Defaults to the method defined in `manufacturer_api.yaml` or `POST`.
+
+**Example (GPS Latest):**
+```bash
+python scripts/test_manufacturer_api.py --named gps_search_v1 --data '{"deviceId":"cam001","startTime":1757260000,"endTime":1757346400}'
+```
+
+### Request Tracing & Observability
+
+All vendor API requests include **correlation IDs** for request tracing:
+- Each request generates a unique 8-character correlation ID
+- Logs include `[correlation_id]` prefix for easy filtering
+- Example: `📡 [a3f2c1d4] Making POST request to /api/v1/gps/search`
+
+**Log Filtering Example:**
+```bash
+# Find all logs for a specific request
+grep "\[a3f2c1d4\]" server.log
+
+# Find all vendor API requests
+grep "📡 \[" server.log
+```
+
 ### Project Structure
 ```
 pythonProject/
@@ -276,6 +352,17 @@ pythonProject/
 3. Add routes in `routers/`
 4. Update main.py to include new router
 5. Add tests and documentation
+
+### Vendor API contract checks (no runtime changes)
+
+Use the CLI to verify exact contracts before enabling adapters:
+
+```bash
+cd pythonProject
+python scripts/test_manufacturer_api.py --named gps_search_latest --data '{"deviceId":"<id>","startTime":<sec>,"endTime":<sec>}'
+```
+
+Capture details in `docs/vendor_endpoint_template.md` and attach one success and one error sample response.
 
 ## 📝 License
 

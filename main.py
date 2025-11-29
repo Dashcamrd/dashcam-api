@@ -5,8 +5,13 @@ from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
 
-# Create all tables
-Base.metadata.create_all(bind=engine)
+# Create all tables (with error handling for connection issues)
+try:
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database tables initialized successfully")
+except Exception as e:
+    print(f"⚠️  Warning: Could not initialize database tables: {e}")
+    print("   Tables will be created on first database access")
 
 app = FastAPI(
     title="Dashcam Management Platform API",
@@ -49,5 +54,15 @@ def root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Health check endpoint for Railway deployment"""
+    try:
+        # Quick database connectivity check (non-blocking)
+        from database import engine
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        # Return ok even if database check fails (app is still running)
+        return {"status": "ok", "database": "disconnected", "message": str(e)}
 

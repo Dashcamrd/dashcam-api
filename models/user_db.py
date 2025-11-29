@@ -11,5 +11,6 @@ class UserDB(Base):
     password_hash = Column(String(200), nullable=False)
     name = Column(String(200), nullable=False)
     email = Column(String(200), nullable=True)
+    phone = Column(String(50), nullable=True)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)

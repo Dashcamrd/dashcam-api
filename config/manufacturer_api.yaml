@@ -1,0 +1,378 @@
+# Manufacturer API configurable contract
+# - Supports multiple profiles via MANUFACTURER_API_PROFILE env
+# - Each endpoint defines path, method, and optional request/response shapes
+# - All endpoints require X-Token header (except login/logout)
+
+profiles:
+  default:
+    base_url_env: MANUFACTURER_API_BASE_URL
+    base_url: http://180.167.106.70:9337
+    # Global settings for all endpoints
+    default_timeout: 30  # seconds
+    default_retries: 3  # number of retry attempts
+    default_retry_delay: 1  # initial delay in seconds (exponential backoff)
+    rate_limit_per_minute: 60  # max requests per minute (0 = no limit)
+    endpoints:
+      # Authentication
+      login:
+        path: /api/v1/user/login
+        method: POST
+        request:
+          required: [username, password, progVersion, platform]
+          optional: [model]
+          defaults:
+            progVersion: "0.0.1"
+            platform: 3
+        response:
+          token_paths: [data.token, token, data.accessToken, accessToken]
+          success_codes: [200, 0]
+
+      logout:
+        path: /api/v1/user/logout
+        method: POST
+        request:
+          optional: []
+
+      # Organization
+      get_organization_tree:
+        path: /api/v1/user/getOrganizationTree
+        method: POST
+        request:
+          optional: []
+
+      # Devices
+      device_list:
+        path: /api/v1/device/getList
+        method: POST
+        request:
+          required: [page, pageSize]
+          optional: [companyId, deviceIds, plateNumbers, sns]
+          defaults:
+            page: 1
+            pageSize: 10
+        response:
+          data_path: data.list
+          total_path: data.total
+
+      device_states:
+        path: /api/v1/device/states
+        method: POST
+        request:
+          required: [deviceIds]
+        response:
+          data_path: data.list
+
+      device_config_get:
+        path: /api/v1/device/config/get
+        method: POST
+        request:
+          required: [deviceId]
+
+      # GPS V1
+      gps_search_v1:
+        path: /api/v1/gps/search
+        method: POST
+        timeout: 60  # GPS searches can take longer
+        retries: 2  # Fewer retries for time-consuming operations
+        request:
+          required: [deviceId, startTime, endTime]
+        response:
+          data_path: data.gpsInfo
+          success_codes: [200, 0]
+
+      gps_query_track_dates_v1:
+        path: /api/v1/gps/queryTrackDates
+        method: POST
+        request:
+          required: [deviceId]
+        response:
+          data_path: data.dates
+
+      gps_query_detailed_track_v1:
+        path: /api/v1/gps/search
+        method: POST
+        request:
+          required: [deviceId, startTime, endTime]
+        response:
+          data_path: data.gpsInfo
+
+      gps_fuzzy_query_v1:
+        path: /api/v1/gps/fuzzyQuery
+        method: POST
+        request:
+          required: [deviceId, startTime, endTime]
+        response:
+          data_path: data.days
+
+      # GPS V2
+      gps_get_latest_v2:
+        path: /api/v2/gps/getLatestGPS
+        method: POST
+        request:
+          required: [deviceIds]
+        response:
+          data_path: data.list
+          success_codes: [200, 0]
+
+      gps_search_v2:
+        path: /api/v2/gps/search
+        method: POST
+        request:
+          required: [deviceIds, startTime, endTime]
+        response:
+          data_path: data.gpsInfo
+
+      gps_fuzzy_query_v2:
+        path: /api/v2/gps/fuzzyQuery
+        method: POST
+        request:
+          required: [deviceIds, startTime, endTime]
+        response:
+          data_path: data.days
+
+      # Media
+      media_preview:
+        path: /api/v1/media/previewVideo
+        method: POST
+        request:
+          required: [deviceId, channels, dataType, streamType]
+        response:
+          data_path: data.videos
+
+      media_close_preview:
+        path: /api/v1/media/closePreview
+        method: POST
+        request:
+          required: [deviceId, channels]
+
+      media_playback:
+        path: /api/v1/media/playback
+        method: POST
+        request:
+          required: [deviceId, channels, startTime, endTime, dataType]
+          optional: [streamType]
+
+      media_close_playback:
+        path: /api/v1/media/closePlayback
+        method: POST
+        request:
+          required: [deviceId, channels]
+
+      media_get_file_list:
+        path: /api/v1/media/getFileList
+        method: POST
+        request:
+          required: [deviceId, channels, startTime, endTime]
+          optional: [fileType]
+
+      media_get_video_calendar:
+        path: /api/v1/media/getVideoCalendar
+        method: POST
+        request:
+          required: [deviceId, channels, startTime, endTime]
+
+      media_two_way_intercom:
+        path: /api/v1/media/deviceTwoWayVoip
+        method: POST
+        request:
+          required: [deviceId, channel]
+
+      media_end_intercom:
+        path: /api/v1/media/closeDeviceTwoWayVoip
+        method: POST
+        request:
+          required: [deviceId, channel]
+
+      # Tasks
+      task_create:
+        path: /api/v1/task/create
+        method: POST
+        request:
+          required: [deviceIds, content, sendTime]
+
+      task_get_list:
+        path: /api/v1/task/getList
+        method: POST
+        request:
+          required: [page, pageSize]
+          optional: [deviceId, status, startTime, endTime]
+          defaults:
+            page: 1
+            pageSize: 10
+
+      task_get_details:
+        path: /api/v1/task/getDetails
+        method: POST
+        request:
+          required: [taskId]
+
+      task_update_info:
+        path: /api/v1/task/updateInfo
+        method: POST
+        request:
+          required: [taskId]
+
+      task_update_status:
+        path: /api/v1/task/updateStatus
+        method: POST
+        request:
+          required: [taskId, status]
+
+      task_delete:
+        path: /api/v1/task/delete
+        method: POST
+        request:
+          required: [taskIds]
+
+      task_get_results:
+        path: /api/v1/task/getResults
+        method: POST
+        request:
+          required: [taskId]
+
+      # Text Delivery
+      text_delivery_send:
+        path: /api/v1/textDelivery/send
+        method: POST
+        request:
+          required: [deviceIds, content]
+
+      # Statistics & Alarms
+      stat_realtime_get_vehicle_alarm:
+        path: /api/v1/stat/realtime/getVehicleAlarm
+        method: POST
+        request:
+          required: [deviceIds]
+        response:
+          data_path: data.alarms
+
+      stat_history_get_vehicle_detail:
+        path: /api/v1/stat/history/getVehicleDetail
+        method: POST
+        request:
+          required: [deviceId, startTime, endTime]
+
+      stat_history_get_vehicle_statistic:
+        path: /api/v1/stat/history/getVehicleStatistic
+        method: POST
+        request:
+          required: [deviceIds, startTime, endTime]
+
+      # System Configuration
+      syscfg_add:
+        path: /api/v1/syscfg/add
+        method: POST
+        request:
+          required: [deviceIds, configs]
+
+      syscfg_get:
+        path: /api/v1/syscfg/get
+        method: POST
+        request:
+          required: [deviceIds]
+
+      syscfg_update:
+        path: /api/v1/syscfg/update
+        method: POST
+        request:
+          required: [deviceIds, configs]
+
+      syscfg_delete:
+        path: /api/v1/syscfg/delete
+        method: POST
+        request:
+          required: [deviceIds, configIds]
+
+      syscfg_switch_status:
+        path: /api/v1/syscfg/switchStatus
+        method: POST
+        request:
+          required: [deviceIds, status]
+
+      # Attachments
+      get_attachments:
+        path: /api/v1/attachment/get
+        method: POST
+        request:
+          required: [deviceId, startTime, endTime]
+
+      # Forwarding - Platforms
+      forwarding_platform_create:
+        path: /api/v1/forwarding/platform/create
+        method: POST
+        request:
+          required: [name, status, configs, companyId]
+
+      forwarding_platform_get_list:
+        path: /api/v1/forwarding/platform/getList
+        method: POST
+        request:
+          required: [page, pageSize]
+          optional: [name, status, companyId, companyName]
+          defaults:
+            page: 1
+            pageSize: 10
+
+      forwarding_platform_get_by_id:
+        path: /api/v1/forwarding/platform/getById
+        method: POST
+        request:
+          required: [id]
+
+      forwarding_platform_update:
+        path: /api/v1/forwarding/platform/update
+        method: POST
+        request:
+          required: [id]
+          optional: [name, configs, description]
+
+      forwarding_platform_delete:
+        path: /api/v1/forwarding/platform/delete
+        method: POST
+        request:
+          required: [ids]
+
+      forwarding_platform_update_status:
+        path: /api/v1/forwarding/platform/updateStatus
+        method: POST
+        request:
+          required: [id, status]
+
+      # Forwarding - Policies
+      forwarding_policy_create:
+        path: /api/v1/forwarding/policy/create
+        method: POST
+        request:
+          required: [name, configs, companyId, platformId, configType]
+          conditional:
+            forwardCompanyId: configType == 1
+            deviceIds: configType == 2
+
+      forwarding_policy_get_list:
+        path: /api/v1/forwarding/policy/getList
+        method: POST
+        request:
+          required: [page, pageSize]
+          optional: [name, companyId, companyName, platformName]
+          defaults:
+            page: 1
+            pageSize: 10
+
+      forwarding_policy_get_by_id:
+        path: /api/v1/forwarding/policy/getById
+        method: POST
+        request:
+          required: [id]
+
+      forwarding_policy_update:
+        path: /api/v1/forwarding/policy/update
+        method: POST
+        request:
+          required: [id]
+          optional: [name, configs, description, platformId, configType, forwardCompanyId, deviceIds]
+
+      forwarding_policy_delete:
+        path: /api/v1/forwarding/policy/delete
+        method: POST
+        request:
+          required: [ids]
