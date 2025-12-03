@@ -10,6 +10,7 @@ pydantic
 pydantic-settings
 requests
 httpx
+websockets
 python-dotenv
 cryptography
 PyYAML

@@ -1,7 +1,7 @@
 """
 Media Router - Handles video preview, playback, and file management
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
@@ -10,6 +10,8 @@ from pydantic import BaseModel
 import logging
 import uuid
 import httpx
+import asyncio
+import websockets
 from adapters import MediaAdapter
 
 logger = logging.getLogger(__name__)
@@ -499,5 +501,110 @@ async def proxy_video_stream(
     except Exception as e:
         logger.error(f"Error proxying video stream: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.websocket("/ws-proxy")
+async def websocket_video_proxy(
+    websocket: WebSocket,
+    url: str = Query(..., description="WebSocket URL to proxy (ws:// format)")
+):
+    """
+    WebSocket proxy for live video streaming on web.
+    Accepts wss:// connections from browser and forwards to ws:// vendor server.
+    This solves the mixed content issue on HTTPS web pages.
+    """
+    await websocket.accept()
+    
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] WebSocket proxy connecting to: {url}")
+    
+    vendor_ws = None
+    
+    try:
+        # Connect to the vendor's WebSocket server
+        # Use ws:// URL directly (backend can connect to insecure WebSocket)
+        async with websockets.connect(
+            url,
+            ping_interval=20,
+            ping_timeout=20,
+            close_timeout=5
+        ) as vendor_ws:
+            logger.info(f"[{correlation_id}] Connected to vendor WebSocket")
+            
+            async def forward_to_client():
+                """Forward data from vendor to browser client"""
+                try:
+                    async for message in vendor_ws:
+                        if isinstance(message, bytes):
+                            await websocket.send_bytes(message)
+                        else:
+                            await websocket.send_text(message)
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info(f"[{correlation_id}] Vendor connection closed")
+                except Exception as e:
+                    logger.error(f"[{correlation_id}] Error forwarding to client: {e}")
+            
+            async def forward_to_vendor():
+                """Forward data from browser client to vendor"""
+                try:
+                    while True:
+                        try:
+                            # Try to receive binary data first (video streams are binary)
+                            data = await websocket.receive_bytes()
+                            await vendor_ws.send(data)
+                        except Exception:
+                            # If not bytes, try text
+                            try:
+                                data = await websocket.receive_text()
+                                await vendor_ws.send(data)
+                            except WebSocketDisconnect:
+                                logger.info(f"[{correlation_id}] Client disconnected")
+                                break
+                            except Exception as e:
+                                logger.error(f"[{correlation_id}] Error receiving from client: {e}")
+                                break
+                except Exception as e:
+                    logger.error(f"[{correlation_id}] Error forwarding to vendor: {e}")
+            
+            # Run both forwarding tasks concurrently
+            forward_task = asyncio.create_task(forward_to_client())
+            receive_task = asyncio.create_task(forward_to_vendor())
+            
+            # Wait for either task to complete (connection closed)
+            done, pending = await asyncio.wait(
+                [forward_task, receive_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel pending tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                    
+    except websockets.exceptions.InvalidURI:
+        logger.error(f"[{correlation_id}] Invalid WebSocket URL: {url}")
+        await websocket.close(code=1008, reason="Invalid WebSocket URL")
+    except websockets.exceptions.InvalidStatusCode as e:
+        logger.error(f"[{correlation_id}] Vendor WebSocket returned status {e.status_code}")
+        await websocket.close(code=1008, reason=f"Vendor returned {e.status_code}")
+    except ConnectionRefusedError:
+        logger.error(f"[{correlation_id}] Connection refused by vendor")
+        await websocket.close(code=1008, reason="Connection refused")
+    except asyncio.TimeoutError:
+        logger.error(f"[{correlation_id}] Connection timeout")
+        await websocket.close(code=1008, reason="Connection timeout")
+    except WebSocketDisconnect:
+        logger.info(f"[{correlation_id}] Client disconnected")
+    except Exception as e:
+        logger.error(f"[{correlation_id}] WebSocket proxy error: {e}")
+        try:
+            await websocket.close(code=1011, reason=str(e)[:120])
+        except:
+            pass
+    finally:
+        logger.info(f"[{correlation_id}] WebSocket proxy connection closed")
 
 
