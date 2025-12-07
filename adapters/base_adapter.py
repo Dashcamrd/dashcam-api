@@ -6,7 +6,7 @@ import uuid
 import os
 import yaml
 from typing import Optional, Any, Dict
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,9 @@ class BaseAdapter:
             return raw_coord / 1_000_000.0
         return None
     
+    # Vendor timezone: China time (UTC+8)
+    VENDOR_TZ = timezone(timedelta(hours=8))
+    
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
@@ -84,13 +87,13 @@ class BaseAdapter:
         Vendor may send:
         - Unix seconds (e.g., 1735888000)
         - Unix milliseconds (e.g., 1735888000000)
-        - String format (e.g., "2024-01-01 12:00:00")
+        - String format (e.g., "2024-01-01 12:00:00") in China time (UTC+8)
         
         Args:
             timestamp: Timestamp in various formats
         
         Returns:
-            Unix timestamp in milliseconds, or None if invalid
+            Unix timestamp in milliseconds (UTC epoch), or None if invalid
         """
         if timestamp is None:
             return None
@@ -107,8 +110,10 @@ class BaseAdapter:
         # If it's a string, try to parse
         if isinstance(timestamp, str):
             try:
-                # Try common formats
+                # Try common formats - vendor sends China time (UTC+8)
                 dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                # Explicitly set timezone to China time (UTC+8)
+                dt = dt.replace(tzinfo=BaseAdapter.VENDOR_TZ)
                 return int(dt.timestamp() * 1000)
             except ValueError:
                 try:
