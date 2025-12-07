@@ -156,6 +156,12 @@ def get_latest_gps(
         response_data["last_online_time_ms"] = dto.timestamp_ms
         response_data["last_online_time"] = dto.timestamp_ms
         
+        # Get geocoded address from coordinates (same as devices screen)
+        if dto.latitude is not None and dto.longitude is not None:
+            location_name = GeocodingService.get_location_name(dto.latitude, dto.longitude)
+            response_data["address"] = location_name
+            response_data["location_name"] = location_name
+        
         if dto.timestamp_ms is not None:
             logger.info(f"[{correlation_id}] GPS endpoint returning timestamp_ms: {dto.timestamp_ms}")
         else:
