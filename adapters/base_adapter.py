@@ -79,15 +79,22 @@ class BaseAdapter:
     # Vendor timezone: China time (UTC+8)
     VENDOR_TZ = timezone(timedelta(hours=8))
     
+    # Vendor integer timestamps are offset due to timezone bug
+    # Correction: China (UTC+8) - Saudi (UTC+3) = 5 hours
+    VENDOR_INT_CORRECTION_SECONDS = 5 * 3600  # 5 hours = 18000 seconds
+    
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
         Convert vendor timestamp to milliseconds.
         
         Vendor may send:
-        - Unix seconds (e.g., 1735888000)
-        - Unix milliseconds (e.g., 1735888000000)
+        - Unix seconds (e.g., 1735888000) - corrected for timezone offset
+        - Unix milliseconds (e.g., 1735888000000) - corrected for timezone offset
         - String format (e.g., "2024-01-01 12:00:00") in China time (UTC+8)
+        
+        Note: Vendor integer timestamps are 5 hours behind due to timezone bug.
+        We add 5 hours to correct for Saudi Arabia (UTC+3) users.
         
         Args:
             timestamp: Timestamp in various formats
@@ -101,11 +108,13 @@ class BaseAdapter:
         # If it's already milliseconds (timestamp >= year 2286 in seconds = ~7e9)
         if isinstance(timestamp, int):
             if timestamp < 1_000_000_000_000:  # Less than year 2286 in ms
-                # Likely seconds, convert to ms
-                return timestamp * 1000
+                # Likely seconds - add correction for vendor timezone bug
+                corrected = timestamp + BaseAdapter.VENDOR_INT_CORRECTION_SECONDS
+                return corrected * 1000
             else:
-                # Already milliseconds
-                return timestamp
+                # Already milliseconds - add correction for vendor timezone bug
+                corrected = timestamp + (BaseAdapter.VENDOR_INT_CORRECTION_SECONDS * 1000)
+                return corrected
         
         # If it's a string, try to parse
         if isinstance(timestamp, str):
