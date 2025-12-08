@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info
+from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
+from models.device_cache_db import DeviceCacheDB, AlarmDB  # New cache models
 
 # Create all tables (with error handling for connection issues)
 try:
@@ -47,6 +48,7 @@ app.include_router(tasks.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
 app.include_router(database_info.router)
+app.include_router(forwarding.router)  # Data forwarding from vendor (webhooks)
 
 @app.get("/")
 def root():
