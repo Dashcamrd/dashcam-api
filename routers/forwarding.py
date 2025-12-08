@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 import json
 import logging
+import os
 
 from database import SessionLocal
 from models.device_cache_db import DeviceCacheDB, AlarmDB
@@ -26,6 +27,10 @@ from services.geocoding_service import GeocodingService
 
 router = APIRouter(prefix="/api/forwarding", tags=["Data Forwarding"])
 logger = logging.getLogger(__name__)
+
+# Vendor authentication secret key (set in environment variables)
+# If not set, authentication is disabled (for development)
+VENDOR_SECRET_KEY = os.getenv("VENDOR_FORWARDING_SECRET", None)
 
 
 def get_db():
@@ -70,7 +75,26 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
     - 1: GPS Location Data
     - 2: Alarm Data
     - 3: Device Status Notification (ACC, Online/Offline)
+    
+    Authentication:
+    - Set VENDOR_FORWARDING_SECRET env var to enable
+    - Vendor must send matching key in Authorization header or X-API-Key header
     """
+    # Vendor authentication (if secret is configured)
+    if VENDOR_SECRET_KEY:
+        auth_header = request.headers.get("Authorization", "")
+        api_key = request.headers.get("X-API-Key", "")
+        
+        # Check Bearer token format
+        if auth_header.startswith("Bearer "):
+            provided_key = auth_header[7:]  # Remove "Bearer " prefix
+        else:
+            provided_key = api_key
+        
+        if provided_key != VENDOR_SECRET_KEY:
+            logger.warning(f"⚠️ Unauthorized forwarding request from {request.client.host}")
+            raise HTTPException(status_code=401, detail="Invalid vendor authentication key")
+    
     try:
         data = await request.json()
     except Exception as e:

@@ -2,6 +2,28 @@
 
 This document explains how to set up real-time data forwarding from the vendor to your backend.
 
+## Security Configuration (Optional but Recommended)
+
+Set a secret key to authenticate vendor requests:
+
+```bash
+# In Render environment variables:
+VENDOR_FORWARDING_SECRET=your-secret-key-here
+```
+
+Then configure vendor to send this key in their requests:
+```json
+{
+    "httpConfig": {
+        "headers": {
+            "Authorization": "Bearer your-secret-key-here"
+        }
+    }
+}
+```
+
+**Note:** If `VENDOR_FORWARDING_SECRET` is not set, authentication is disabled (for development).
+
 ## Overview
 
 Instead of polling the vendor API repeatedly, the vendor pushes data to your backend when:
