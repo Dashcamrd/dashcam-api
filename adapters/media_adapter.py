@@ -94,7 +94,8 @@ class MediaAdapter(BaseAdapter):
         device_id: str,
         channel: int = 1,
         data_type: int = 1,
-        stream_type: int = 0
+        stream_type: int = 0,
+        play_format: int = 0
     ) -> Dict[str, Any]:
         """
         Build request for preview endpoint.
@@ -104,6 +105,7 @@ class MediaAdapter(BaseAdapter):
             channel: Channel number (default: 1)
             data_type: 1=Preview, 3=Monitor (default: 1)
             stream_type: 0=main, 1=sub (default: 0)
+            play_format: 0=WebSocket, 2=WebRTC (default: 0)
         
         Returns:
             Request dictionary
@@ -112,7 +114,8 @@ class MediaAdapter(BaseAdapter):
             "deviceId": device_id,
             "channels": [channel],
             "dataType": data_type,
-            "streamType": stream_type
+            "streamType": stream_type,
+            "playFormat": play_format
         }
     
     @staticmethod

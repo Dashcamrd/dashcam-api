@@ -22,6 +22,7 @@ class PreviewRequest(BaseModel):
     device_id: str
     channel: Optional[int] = 1
     stream: Optional[int] = 1  # 1=main stream, 2=sub stream
+    play_format: Optional[int] = 0  # 0=WebSocket, 2=WebRTC
 
 class PlaybackRequest(BaseModel):
     device_id: str
@@ -66,9 +67,11 @@ def start_preview(
         device_id=request.device_id,
         channel=request.channel,
         stream_type=request.stream,
-        data_type=1  # Preview (video only)
+        data_type=1,  # Preview (video only)
+        play_format=request.play_format  # 0=WebSocket, 2=WebRTC
     )
     
+    logger.info(f"[{correlation_id}] Preview request with playFormat={request.play_format}")
     preview_result = manufacturer_api.open_preview(preview_data)
     preview_dto = MediaAdapter.parse_preview_response(preview_result, request.device_id, correlation_id + "_video")
     
@@ -77,7 +80,8 @@ def start_preview(
         device_id=request.device_id,
         channel=request.channel,
         stream_type=request.stream,
-        data_type=3  # Monitor (audio only)
+        data_type=3,  # Monitor (audio only)
+        play_format=request.play_format  # 0=WebSocket, 2=WebRTC
     )
     
     monitor_result = manufacturer_api.open_preview(monitor_data)
