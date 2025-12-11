@@ -101,6 +101,9 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
         logger.error(f"❌ Failed to parse JSON: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
     
+    # 🔍 DEBUG: Log raw vendor data to understand their format
+    logger.info(f"📦 RAW VENDOR DATA: {json.dumps(data)[:2000]}")
+    
     msg_id = data.get("msgId")
     device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
     
