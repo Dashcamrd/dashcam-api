@@ -127,7 +127,7 @@ def list_all_users(
                 "invoice_no": user.invoice_no,
                 "name": user.name,
                 "email": user.email,
-                "created_at": user.created_at.isoformat(),
+                "created_at": user.created_at.isoformat() if user.created_at else None,
                 "device_count": device_count
             })
         

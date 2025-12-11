@@ -57,7 +57,7 @@ def list_user_devices(current_user: dict = Depends(get_current_user)):
             "brand": device.brand,
             "model": device.model,
             "firmware_version": device.firmware_version,
-            "created_at": device.created_at.isoformat(),
+            "created_at": device.created_at.isoformat() if device.created_at else None,
             "online_status": "unknown",
             "last_seen": None
         }
@@ -116,7 +116,7 @@ def get_device_details(
         "brand": device.brand,
         "model": device.model,
         "firmware_version": device.firmware_version,
-        "created_at": device.created_at.isoformat()
+        "created_at": device.created_at.isoformat() if device.created_at else None
     }
     
     # Try to get real-time status and config
