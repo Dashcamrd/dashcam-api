@@ -29,7 +29,7 @@ class ManufacturerAPIService:
         profile_config = self.config["profiles"][self.profile]
         self.base_url = os.getenv(
             profile_config.get("base_url_env", "MANUFACTURER_API_BASE_URL"),
-            profile_config.get("base_url", "http://180.167.106.70:9337")
+            profile_config.get("base_url", "https://www.chinamdvr.com:9367")
         )
         
         self.username = os.getenv("MANUFACTURER_API_USERNAME")

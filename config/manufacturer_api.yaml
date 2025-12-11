@@ -6,7 +6,7 @@
 profiles:
   default:
     base_url_env: MANUFACTURER_API_BASE_URL
-    base_url: http://180.167.106.70:9337
+    base_url: https://www.chinamdvr.com:9367
     # Global settings for all endpoints
     default_timeout: 30  # seconds
     default_retries: 3  # number of retry attempts
