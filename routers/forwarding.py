@@ -101,8 +101,6 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
         logger.error(f"❌ Failed to parse JSON: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
     
-    # 🔍 DEBUG: Log raw vendor data to understand their format (using print for guaranteed visibility)
-    print(f"RAW_VENDOR_DATA: {json.dumps(data)[:2000]}")
     
     msg_id = data.get("msgId")
     device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
@@ -383,8 +381,11 @@ async def handle_alarm_data(db: Session, data: dict):
         alarm_type = alarm_item.get("type")
         alarm_status = alarm_item.get("Status", 0)  # 0 = inactive, 1 = active
         
-        # Only store active alarms (Status=1) or all if you want history
-        # For now, let's store all alarm events
+        # Only store ACTIVE alarms (Status=1) to save database space
+        # Status=0 means "alarm cleared/inactive" - no need to store
+        if alarm_status != 1:
+            continue  # Skip inactive alarms
+        
         alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Type {alarm_type}")
         
         if alarm_type in critical_alarms:
