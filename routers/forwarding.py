@@ -140,10 +140,32 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
 async def handle_gps_data(db: Session, data: dict):
     """
     Process forwarded GPS data.
-    GPS data may contain a single record or a batch in the 'list' field.
+    
+    Vendor format:
+    {
+        "msgId": 1,
+        "gps": {
+            "list": [{
+                "deviceId": "18260010855",
+                "latitude": 31.060734,
+                "longitude": 121.414273,
+                "speed": 0,
+                "direction": 0,
+                "time": 1765457419,
+                "altitude": 0,
+                "statusFlags": {"acc": true, ...}
+            }]
+        }
+    }
     """
-    # Handle batch GPS data
-    gps_list = data.get("list", [data])
+    # Extract GPS list from vendor's nested structure
+    gps_container = data.get("gps", {})
+    gps_list = gps_container.get("list", [])
+    
+    # Fallback: if no nested structure, try flat structure
+    if not gps_list:
+        gps_list = data.get("list", [data])
+    
     if not isinstance(gps_list, list):
         gps_list = [gps_list]
     
@@ -152,16 +174,21 @@ async def handle_gps_data(db: Session, data: dict):
     for gps in gps_list:
         device_id = gps.get("deviceId") or gps.get("imei") or gps.get("device_id")
         if not device_id:
+            logger.warning(f"⚠️ GPS data without device_id: {json.dumps(gps)[:200]}")
             continue
         
-        lat = gps.get("lat") or gps.get("latitude")
-        lng = gps.get("lng") or gps.get("lon") or gps.get("longitude")
+        lat = gps.get("latitude") or gps.get("lat")
+        lng = gps.get("longitude") or gps.get("lng") or gps.get("lon")
         speed = gps.get("speed") or gps.get("spd")
         direction = gps.get("direction") or gps.get("course") or gps.get("dir")
         altitude = gps.get("altitude") or gps.get("alt")
         
+        # Extract ACC status from statusFlags
+        status_flags = gps.get("statusFlags", {})
+        acc_status = status_flags.get("acc", False)
+        
         # Parse GPS timestamp
-        gps_timestamp = gps.get("gpsTime") or gps.get("time") or gps.get("timestamp")
+        gps_timestamp = gps.get("time") or gps.get("gpsTime") or gps.get("timestamp")
         gps_time = None
         if gps_timestamp:
             if isinstance(gps_timestamp, int):
@@ -194,6 +221,7 @@ async def handle_gps_data(db: Session, data: dict):
             existing.altitude = altitude
             existing.gps_time = gps_time
             existing.address = address
+            existing.acc_status = acc_status  # Update ACC from GPS data
             existing.is_online = True  # Device sending GPS = online
             existing.last_online_time = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
@@ -207,12 +235,14 @@ async def handle_gps_data(db: Session, data: dict):
                 altitude=altitude,
                 gps_time=gps_time,
                 address=address,
+                acc_status=acc_status,
                 is_online=True,
                 last_online_time=datetime.utcnow()
             )
             db.add(new_cache)
         
         processed_count += 1
+        logger.info(f"✅ Stored GPS for device {device_id}: lat={lat}, lng={lng}, acc={acc_status}")
     
     db.commit()
     logger.info(f"✅ Processed {processed_count} GPS records")
@@ -267,17 +297,44 @@ async def handle_device_status(db: Session, data: dict):
 async def handle_alarm_data(db: Session, data: dict):
     """
     Process alarm events from vendor.
+    
+    Vendor format:
+    {
+        "msgId": 2,
+        "alarm": {
+            "base": {
+                "deviceId": "18260010855",
+                "latitude": 31.060734,
+                "longitude": 121.414273,
+                "time": 1765457449,
+                "statusFlags": {"acc": true, ...}
+            },
+            "list": [
+                {"type": 27, "Status": 0},
+                {"type": 29, "Status": 0}
+            ]
+        }
+    }
     """
-    device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
+    # Extract from vendor's nested structure
+    alarm_container = data.get("alarm", {})
+    base_info = alarm_container.get("base", {})
+    alarm_list = alarm_container.get("list", [])
+    
+    # Get device ID from base info
+    device_id = base_info.get("deviceId") or base_info.get("imei") or data.get("deviceId")
     if not device_id:
-        logger.warning("⚠️ Alarm without device_id")
+        logger.warning(f"⚠️ Alarm without device_id: {json.dumps(data)[:300]}")
         return
     
-    alarm_type = data.get("alarmType") or data.get("type") or data.get("alarm_type")
-    alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Unknown ({alarm_type})")
+    # Extract location from base info
+    lat = base_info.get("latitude") or base_info.get("lat")
+    lng = base_info.get("longitude") or base_info.get("lng") or base_info.get("lon")
+    speed = base_info.get("speed")
+    direction = base_info.get("direction")
     
-    # Parse alarm time
-    alarm_timestamp = data.get("alarmTime") or data.get("time") or data.get("timestamp")
+    # Parse alarm time from base info
+    alarm_timestamp = base_info.get("time") or base_info.get("alarmTime") or base_info.get("timestamp")
     alarm_time = datetime.utcnow()
     if alarm_timestamp:
         if isinstance(alarm_timestamp, int):
@@ -288,38 +345,74 @@ async def handle_alarm_data(db: Session, data: dict):
             except:
                 pass
     
-    # Extract location
-    lat = data.get("lat") or data.get("latitude")
-    lng = data.get("lng") or data.get("lon") or data.get("longitude")
-    speed = data.get("speed")
+    # Also update device cache with this location data (device is online if sending alarms)
+    existing_cache = db.query(DeviceCacheDB).filter(
+        DeviceCacheDB.device_id == device_id
+    ).first()
     
-    # Determine alarm level
+    status_flags = base_info.get("statusFlags", {})
+    acc_status = status_flags.get("acc", False)
+    
+    if existing_cache:
+        if lat and lng:
+            existing_cache.latitude = lat
+            existing_cache.longitude = lng
+        existing_cache.acc_status = acc_status
+        existing_cache.is_online = True
+        existing_cache.last_online_time = datetime.utcnow()
+        existing_cache.updated_at = datetime.utcnow()
+    elif lat and lng:
+        new_cache = DeviceCacheDB(
+            device_id=device_id,
+            latitude=lat,
+            longitude=lng,
+            acc_status=acc_status,
+            is_online=True,
+            last_online_time=datetime.utcnow()
+        )
+        db.add(new_cache)
+    
+    # Process each alarm type in the list
+    # Determine alarm levels
     critical_alarms = [1, 7, 11, 12, 15, 16]  # SOS, Collision, Low Battery, Offline, Vibration, Tamper
     warning_alarms = [2, 3, 4, 5, 6, 8]  # Speed, Fatigue, Turns, Lane Departure
     
-    if alarm_type in critical_alarms:
-        alarm_level = 3
-    elif alarm_type in warning_alarms:
-        alarm_level = 2
-    else:
-        alarm_level = 1
+    processed_count = 0
     
-    # Create alarm record
-    new_alarm = AlarmDB(
-        device_id=device_id,
-        alarm_type=alarm_type,
-        alarm_type_name=alarm_type_name,
-        alarm_level=alarm_level,
-        latitude=lat,
-        longitude=lng,
-        speed=speed,
-        alarm_time=alarm_time,
-        alarm_data=json.dumps(data)
-    )
-    db.add(new_alarm)
+    for alarm_item in alarm_list:
+        alarm_type = alarm_item.get("type")
+        alarm_status = alarm_item.get("Status", 0)  # 0 = inactive, 1 = active
+        
+        # Only store active alarms (Status=1) or all if you want history
+        # For now, let's store all alarm events
+        alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Type {alarm_type}")
+        
+        if alarm_type in critical_alarms:
+            alarm_level = 3
+        elif alarm_type in warning_alarms:
+            alarm_level = 2
+        else:
+            alarm_level = 1
+        
+        # Create alarm record
+        new_alarm = AlarmDB(
+            device_id=device_id,
+            alarm_type=alarm_type,
+            alarm_type_name=alarm_type_name,
+            alarm_level=alarm_level,
+            latitude=lat,
+            longitude=lng,
+            speed=speed,
+            alarm_time=alarm_time,
+            alarm_data=json.dumps({"base": base_info, "alarm": alarm_item})
+        )
+        db.add(new_alarm)
+        processed_count += 1
+        
+        logger.info(f"🚨 Alarm for {device_id}: {alarm_type_name} (type={alarm_type}, status={alarm_status})")
+    
     db.commit()
-    
-    logger.info(f"🚨 New alarm for {device_id}: {alarm_type_name} (level {alarm_level})")
+    logger.info(f"✅ Processed {processed_count} alarms for device {device_id}")
 
 
 # ============================================================================
