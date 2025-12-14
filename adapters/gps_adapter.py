@@ -515,36 +515,86 @@ class GPSAdapter(BaseAdapter):
                     
                     # =========================================================
                     # 1️⃣ Parse alarmSign (31 types) - vendor uses "alarmSign" not "alarmFlags"
+                    #    Can be dict {"emergency": false} or list format
                     # =========================================================
-                    alarm_flags = p.get("alarmSign", {}) or p.get("alarmFlags", {})
-                    for flag_name, is_active in alarm_flags.items():
-                        if not is_active:
-                            continue
+                    alarm_sign = p.get("alarmSign") or p.get("alarmFlags")
+                    
+                    # Handle dict format: {"emergency": false, "overspeed": true, ...}
+                    if isinstance(alarm_sign, dict):
+                        for flag_name, is_active in alarm_sign.items():
+                            if not is_active:
+                                continue
+                            
+                            alarm_info = ALARM_FLAG_MAPPING.get(flag_name, {
+                                "name": flag_name.replace("_", " ").title(),
+                                "severity": "info",
+                                "type_id": 0
+                            })
+                            
+                            alarm_key = (f"flag_{flag_name}", timestamp_ms)
+                            if alarm_key in seen_alarms:
+                                continue
+                            seen_alarms.add(alarm_key)
+                            
+                            alarms.append(AlarmDto(
+                                alarm_id=f"{device_id}_flag_{flag_name}_{timestamp_ms}",
+                                device_id=device_id,
+                                type_id=alarm_info.get("type_id", 0),
+                                level=alarm_info["severity"],
+                                message=alarm_info["name"],
+                                timestamp_ms=timestamp_ms,
+                                latitude=latitude,
+                                longitude=longitude,
+                                speed=speed,
+                                status="active"
+                            ))
+                            stats["alarmFlags"] += 1
+                    
+                    # Handle list format: [0, 0, 1, 0, ...] (bitmask)
+                    # Each position corresponds to an alarm type by index
+                    elif isinstance(alarm_sign, list):
+                        # Map list indices to alarm flag names (based on vendor spec order)
+                        flag_names_ordered = [
+                            "emergency", "overspeed", "fatigueDriving", "dangerWarning",
+                            "gnssFault", "gnssAntennaCut", "gnssAntennaShortCircuit",
+                            "mainPowerUndervoltage", "mainPowerFailure", "lcdFault",
+                            "ttsFault", "cameraFault", "icCardFault", "overspeedWarning",
+                            "fatigueDrivingWarning", "illegalDrivingAlarm", "tirePressureWarning",
+                            "rightTurnBlindSpotAlarm", "cumulativeDrivingOvertime", "parkingOvertime",
+                            "areaEntryExit", "routeEntryExit", "routeDrivingTimeAbnormal",
+                            "routeDeviation", "vssFault", "fuelAbnormal", "vehicleStolen",
+                            "illegalIgnition", "illegalMovement", "collisionWarning", "rolloverWarning"
+                        ]
                         
-                        alarm_info = ALARM_FLAG_MAPPING.get(flag_name, {
-                            "name": flag_name.replace("_", " ").title(),
-                            "severity": "info",
-                            "type_id": 0
-                        })
-                        
-                        alarm_key = (f"flag_{flag_name}", timestamp_ms)
-                        if alarm_key in seen_alarms:
-                            continue
-                        seen_alarms.add(alarm_key)
-                        
-                        alarms.append(AlarmDto(
-                            alarm_id=f"{device_id}_flag_{flag_name}_{timestamp_ms}",
-                            device_id=device_id,
-                            type_id=alarm_info.get("type_id", 0),
-                            level=alarm_info["severity"],
-                            message=alarm_info["name"],
-                            timestamp_ms=timestamp_ms,
-                            latitude=latitude,
-                            longitude=longitude,
-                            speed=speed,
-                            status="active"
-                        ))
-                        stats["alarmFlags"] += 1
+                        for idx, is_active in enumerate(alarm_sign):
+                            if not is_active or idx >= len(flag_names_ordered):
+                                continue
+                            
+                            flag_name = flag_names_ordered[idx]
+                            alarm_info = ALARM_FLAG_MAPPING.get(flag_name, {
+                                "name": flag_name.replace("_", " ").title(),
+                                "severity": "info",
+                                "type_id": 0
+                            })
+                            
+                            alarm_key = (f"flag_{flag_name}", timestamp_ms)
+                            if alarm_key in seen_alarms:
+                                continue
+                            seen_alarms.add(alarm_key)
+                            
+                            alarms.append(AlarmDto(
+                                alarm_id=f"{device_id}_flag_{flag_name}_{timestamp_ms}",
+                                device_id=device_id,
+                                type_id=alarm_info.get("type_id", 0),
+                                level=alarm_info["severity"],
+                                message=alarm_info["name"],
+                                timestamp_ms=timestamp_ms,
+                                latitude=latitude,
+                                longitude=longitude,
+                                speed=speed,
+                                status="active"
+                            ))
+                            stats["alarmFlags"] += 1
                     
                     # =========================================================
                     # 2️⃣ Parse additional for ADAS, Video, Driver behavior
@@ -675,22 +725,35 @@ class GPSAdapter(BaseAdapter):
                 all_flags_seen = set()
                 all_flag_names_in_response = set()  # All flag names, regardless of active/inactive
                 points_with_flags = 0
+                alarm_sign_format = "unknown"
+                
                 for p in raw_points:
-                    alarm_flags = p.get("alarmSign", {}) or p.get("alarmFlags", {})
-                    if alarm_flags:
+                    alarm_sign = p.get("alarmSign") or p.get("alarmFlags")
+                    if alarm_sign:
                         points_with_flags += 1
-                        for flag_name, is_active in alarm_flags.items():
-                            all_flag_names_in_response.add(flag_name)
-                            if is_active:
-                                all_flags_seen.add(flag_name)
+                        
+                        if isinstance(alarm_sign, dict):
+                            alarm_sign_format = "dict"
+                            for flag_name, is_active in alarm_sign.items():
+                                all_flag_names_in_response.add(flag_name)
+                                if is_active:
+                                    all_flags_seen.add(flag_name)
+                        elif isinstance(alarm_sign, list):
+                            alarm_sign_format = f"list[{len(alarm_sign)}]"
+                            # Check if any values in list are non-zero (active)
+                            for idx, val in enumerate(alarm_sign):
+                                if val:
+                                    all_flags_seen.add(f"index_{idx}")
                 
                 logger.info(f"[{correlation_id}] GPS points with alarmSign field: {points_with_flags}/{len(raw_points)}")
-                logger.info(f"[{correlation_id}] Total unique alarm types in response: {len(all_flag_names_in_response)}")
+                logger.info(f"[{correlation_id}] alarmSign format: {alarm_sign_format}")
                 
-                # Show which flags exist in response but NOT in our mapping
-                unmapped_flags = all_flag_names_in_response - set(ALARM_FLAG_MAPPING.keys())
-                if unmapped_flags:
-                    logger.info(f"[{correlation_id}] ⚠️ Unmapped alarm types in response: {sorted(unmapped_flags)}")
+                if alarm_sign_format.startswith("dict"):
+                    logger.info(f"[{correlation_id}] Total unique alarm types in response: {len(all_flag_names_in_response)}")
+                    # Show which flags exist in response but NOT in our mapping
+                    unmapped_flags = all_flag_names_in_response - set(ALARM_FLAG_MAPPING.keys())
+                    if unmapped_flags:
+                        logger.info(f"[{correlation_id}] ⚠️ Unmapped alarm types in response: {sorted(unmapped_flags)}")
                 
                 if all_flags_seen:
                     logger.info(f"[{correlation_id}] 🚨 Active alarm flags found: {sorted(all_flags_seen)}")
@@ -699,8 +762,13 @@ class GPSAdapter(BaseAdapter):
                     # Log sample of what alarmSign looks like (first point with the field)
                     sample_points = [p for p in raw_points[:10] if p.get("alarmSign") or p.get("alarmFlags")]
                     if sample_points:
-                        sample_flags = sample_points[0].get('alarmSign', {}) or sample_points[0].get('alarmFlags', {})
-                        logger.info(f"[{correlation_id}] 🔍 Sample alarmSign ({len(sample_flags)} types): {list(sample_flags.keys())}")
+                        sample_val = sample_points[0].get('alarmSign') or sample_points[0].get('alarmFlags')
+                        if isinstance(sample_val, dict):
+                            logger.info(f"[{correlation_id}] 🔍 Sample alarmSign (dict, {len(sample_val)} keys): {list(sample_val.keys())[:10]}")
+                        elif isinstance(sample_val, list):
+                            logger.info(f"[{correlation_id}] 🔍 Sample alarmSign (list, {len(sample_val)} items): {sample_val[:10]}")
+                        else:
+                            logger.info(f"[{correlation_id}] 🔍 Sample alarmSign type: {type(sample_val).__name__}, value: {sample_val}")
                     else:
                         # Log keys available in GPS points
                         if raw_points:
