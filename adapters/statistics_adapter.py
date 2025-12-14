@@ -287,23 +287,26 @@ class StatisticsAdapter(BaseAdapter):
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 100
     ) -> Dict[str, Any]:
         """
         Build request for alarm query endpoint.
         
         Args:
-            device_ids: List of device IDs
+            device_ids: List of device IDs (only first one is used - vendor accepts single device)
             start_time: Optional start time (Unix seconds)
             end_time: Optional end time (Unix seconds)
             page: Page number (default: 1)
-            page_size: Items per page (default: 10)
+            page_size: Items per page (default: 100)
         
         Returns:
             Request dictionary
         """
+        # Vendor expects "deviceId" (singular string), not "deviceIds" (array)
+        device_id = device_ids[0] if device_ids else ""
+        
         request: Dict[str, Any] = {
-            "deviceIds": device_ids,
+            "deviceId": device_id,
             "pageArg": {
                 "page": page,
                 "pageSize": page_size
