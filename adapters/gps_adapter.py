@@ -514,9 +514,9 @@ class GPSAdapter(BaseAdapter):
                         continue
                     
                     # =========================================================
-                    # 1️⃣ Parse alarmFlags (31 types)
+                    # 1️⃣ Parse alarmSign (31 types) - vendor uses "alarmSign" not "alarmFlags"
                     # =========================================================
-                    alarm_flags = p.get("alarmFlags", {})
+                    alarm_flags = p.get("alarmSign", {}) or p.get("alarmFlags", {})
                     for flag_name, is_active in alarm_flags.items():
                         if not is_active:
                             continue
@@ -547,9 +547,10 @@ class GPSAdapter(BaseAdapter):
                         stats["alarmFlags"] += 1
                     
                     # =========================================================
-                    # 2️⃣ Parse additionalInfos for ADAS, Video, Driver behavior
+                    # 2️⃣ Parse additional for ADAS, Video, Driver behavior
+                    #    Vendor uses "additional" not "additionalInfos"
                     # =========================================================
-                    additional_infos = p.get("additionalInfos", [])
+                    additional_infos = p.get("additional", []) or p.get("additionalInfos", [])
                     for info in additional_infos:
                         info_id = info.get("id")
                         
@@ -670,11 +671,12 @@ class GPSAdapter(BaseAdapter):
                 logger.info(f"[{correlation_id}] Our mapping has {len(ALARM_FLAG_MAPPING)} alarm types defined")
                 
                 # Log unique alarm flag names found across all points
+                # Check both "alarmSign" (actual) and "alarmFlags" (fallback)
                 all_flags_seen = set()
                 all_flag_names_in_response = set()  # All flag names, regardless of active/inactive
                 points_with_flags = 0
                 for p in raw_points:
-                    alarm_flags = p.get("alarmFlags", {})
+                    alarm_flags = p.get("alarmSign", {}) or p.get("alarmFlags", {})
                     if alarm_flags:
                         points_with_flags += 1
                         for flag_name, is_active in alarm_flags.items():
@@ -682,7 +684,7 @@ class GPSAdapter(BaseAdapter):
                             if is_active:
                                 all_flags_seen.add(flag_name)
                 
-                logger.info(f"[{correlation_id}] GPS points with alarmFlags field: {points_with_flags}/{len(raw_points)}")
+                logger.info(f"[{correlation_id}] GPS points with alarmSign field: {points_with_flags}/{len(raw_points)}")
                 logger.info(f"[{correlation_id}] Total unique alarm types in response: {len(all_flag_names_in_response)}")
                 
                 # Show which flags exist in response but NOT in our mapping
@@ -694,11 +696,11 @@ class GPSAdapter(BaseAdapter):
                     logger.info(f"[{correlation_id}] 🚨 Active alarm flags found: {sorted(all_flags_seen)}")
                 else:
                     logger.info(f"[{correlation_id}] ⚪ No active alarm flags found in any GPS point")
-                    # Log sample of what alarmFlags look like (first point with the field)
-                    sample_points = [p for p in raw_points[:10] if p.get("alarmFlags")]
+                    # Log sample of what alarmSign looks like (first point with the field)
+                    sample_points = [p for p in raw_points[:10] if p.get("alarmSign") or p.get("alarmFlags")]
                     if sample_points:
-                        sample_flags = sample_points[0].get('alarmFlags', {})
-                        logger.info(f"[{correlation_id}] 🔍 Sample alarmFlags ({len(sample_flags)} types): {list(sample_flags.keys())}")
+                        sample_flags = sample_points[0].get('alarmSign', {}) or sample_points[0].get('alarmFlags', {})
+                        logger.info(f"[{correlation_id}] 🔍 Sample alarmSign ({len(sample_flags)} types): {list(sample_flags.keys())}")
                     else:
                         # Log keys available in GPS points
                         if raw_points:
