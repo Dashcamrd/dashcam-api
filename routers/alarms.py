@@ -26,7 +26,8 @@ class AttachmentRequest(BaseModel):
 
 def verify_device_access(device_id: str, current_user: dict) -> bool:
     """Verify that the current user has access to the specified device"""
-    user_devices = get_user_devices(current_user["user_id"])
+    is_admin = current_user.get("is_admin", False)
+    user_devices = get_user_devices(current_user["user_id"], is_admin=is_admin)
     user_device_ids = [device.device_id for device in user_devices]
     return device_id in user_device_ids
 
