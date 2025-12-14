@@ -103,7 +103,17 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
     
     
     msg_id = data.get("msgId")
-    device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
+    
+    # Extract device_id from appropriate location based on msgId
+    if msg_id == 1:  # GPS - nested in gps.list[0].deviceId
+        gps_list = data.get("gps", {}).get("list", [])
+        device_id = gps_list[0].get("deviceId") if gps_list else None
+    elif msg_id == 2:  # Alarm - nested in alarm.base.deviceId
+        device_id = data.get("alarm", {}).get("base", {}).get("deviceId")
+    elif msg_id == 3:  # Device Status
+        device_id = data.get("deviceId") or data.get("imei")
+    else:
+        device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
     
     logger.info(f"📨 Received forwarded data: msgId={msg_id}, device={device_id}")
     
@@ -380,13 +390,15 @@ async def handle_alarm_data(db: Session, data: dict):
     for alarm_item in alarm_list:
         alarm_type = alarm_item.get("type")
         alarm_status = alarm_item.get("Status", 0)  # 0 = inactive, 1 = active
+        alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Type {alarm_type}")
+        
+        # Log ALL alarms received (for visibility)
+        logger.info(f"📋 Alarm received: {alarm_type_name} (type={alarm_type}, status={alarm_status}) - {'ACTIVE ✓' if alarm_status == 1 else 'inactive, skipping'}")
         
         # Only store ACTIVE alarms (Status=1) to save database space
         # Status=0 means "alarm cleared/inactive" - no need to store
         if alarm_status != 1:
             continue  # Skip inactive alarms
-        
-        alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Type {alarm_type}")
         
         if alarm_type in critical_alarms:
             alarm_level = 3
