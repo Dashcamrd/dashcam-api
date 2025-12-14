@@ -55,14 +55,23 @@ def get_recent_alarms(
     query_data = StatisticsAdapter.build_alarm_query_request(
         device_ids=[device_id],
         start_time=start_time,
-        end_time=current_time
+        end_time=current_time,
+        page_size=100  # Increase page size to get more alarms
     )
+    
+    logger.info(f"[{correlation_id}] Alarm query request: {query_data}")
     
     # Call manufacturer API
     result = manufacturer_api.get_vehicle_alarms(query_data)
     
+    # Log raw vendor response for debugging
+    import json
+    logger.info(f"[{correlation_id}] 🔍 RAW ALARM RESPONSE: {json.dumps(result)[:1000]}")
+    
     # Parse response using adapter with correlation ID
     alarm_summary = StatisticsAdapter.parse_alarm_response(result, device_id, correlation_id)
+    
+    logger.info(f"[{correlation_id}] Parsed {alarm_summary.total_alarms} alarms")
     
     return {
         "success": True,
