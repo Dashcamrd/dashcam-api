@@ -1,5 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+# Configure logging to show INFO level messages in Render logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding
 from database import Base, engine
 from models.device_db import DeviceDB
