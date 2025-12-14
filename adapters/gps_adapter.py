@@ -3,10 +3,35 @@ GPS Adapter - Maps vendor GPS API responses to stable DTOs.
 """
 import logging
 from typing import Optional, Dict, Any, List
-from models.dto import LatestGpsDto, TrackPointDto, TrackPlaybackDto
+from models.dto import LatestGpsDto, TrackPointDto, TrackPlaybackDto, AlarmDto
 from .base_adapter import BaseAdapter
 
 logger = logging.getLogger(__name__)
+
+# Alarm type mappings for alarmFlags
+ALARM_FLAG_MAPPING = {
+    "emergency": {"name": "Emergency SOS", "severity": "critical", "type_id": 1},
+    "overspeed": {"name": "Overspeed", "severity": "warning", "type_id": 2},
+    "fatigueDriving": {"name": "Driver Fatigue", "severity": "warning", "type_id": 3},
+    "prewarning": {"name": "Pre-warning", "severity": "info", "type_id": 4},
+    "gnssModuleFailure": {"name": "GPS Module Failure", "severity": "warning", "type_id": 5},
+    "gnssAntennaShortCircuit": {"name": "GPS Antenna Short", "severity": "warning", "type_id": 6},
+    "collision": {"name": "Collision Warning", "severity": "critical", "type_id": 7},
+    "rollover": {"name": "Rollover Alert", "severity": "critical", "type_id": 8},
+    "illegalIgnition": {"name": "Illegal Ignition", "severity": "warning", "type_id": 9},
+    "illegalMobileDevice": {"name": "Illegal Mobile Device", "severity": "warning", "type_id": 10},
+    "frontCollision": {"name": "Front Collision Warning", "severity": "critical", "type_id": 11},
+    "laneDeparture": {"name": "Lane Departure Warning", "severity": "info", "type_id": 12},
+    "pedestrianCollision": {"name": "Pedestrian Collision Warning", "severity": "critical", "type_id": 13},
+    "headwayMonitoring": {"name": "Following Too Close", "severity": "warning", "type_id": 14},
+    "harshBraking": {"name": "Harsh Braking", "severity": "warning", "type_id": 15},
+    "harshAcceleration": {"name": "Harsh Acceleration", "severity": "info", "type_id": 16},
+    "smoking": {"name": "Smoking Detected", "severity": "warning", "type_id": 17},
+    "phoneUse": {"name": "Phone Use Detected", "severity": "warning", "type_id": 18},
+    "driverAbsence": {"name": "Driver Absence", "severity": "warning", "type_id": 19},
+    "yawning": {"name": "Yawning Detected", "severity": "info", "type_id": 20},
+    "distracted": {"name": "Driver Distracted", "severity": "warning", "type_id": 21},
+}
 
 
 class GPSAdapter(BaseAdapter):
@@ -356,4 +381,121 @@ class GPSAdapter(BaseAdapter):
             "startTime": start_time,
             "endTime": end_time
         }
+    
+    @staticmethod
+    def parse_gps_alarms(
+        vendor_response: Dict[str, Any],
+        device_id: str,
+        correlation_id: Optional[str] = None
+    ) -> List[AlarmDto]:
+        """
+        Parse GPS search response and extract alarms from alarmFlags.
+        
+        Each GPS point may have an alarmFlags object with boolean fields.
+        We extract points where any alarm flag is True.
+        
+        Args:
+            vendor_response: Raw vendor API response from /api/v2/gps/search
+            device_id: Device ID for the GPS data
+            correlation_id: Optional correlation ID for logging
+        
+        Returns:
+            List of AlarmDto objects extracted from GPS points with active alarms
+        """
+        try:
+            # Validate response code
+            success_codes = GPSAdapter.get_response_success_codes("gps_search_v1", [200, 0])
+            code = vendor_response.get("code")
+            
+            if code not in success_codes:
+                error_msg = f"GPS response has non-success code: {code}"
+                if correlation_id:
+                    logger.warning(f"[{correlation_id}] {error_msg}")
+                return []
+            
+            # Extract GPS points from response
+            data = vendor_response.get("data", {})
+            
+            # Try different response formats
+            raw_points = data.get("list", []) or data.get("gpsInfo", []) or []
+            
+            if not raw_points:
+                if correlation_id:
+                    logger.info(f"[{correlation_id}] No GPS points in response")
+                return []
+            
+            alarms: List[AlarmDto] = []
+            seen_alarms = set()  # Deduplicate by (alarm_type, timestamp)
+            
+            for p in raw_points:
+                try:
+                    alarm_flags = p.get("alarmFlags", {})
+                    
+                    # Skip if no alarm flags or empty
+                    if not alarm_flags:
+                        continue
+                    
+                    # Check each alarm flag
+                    for flag_name, is_active in alarm_flags.items():
+                        if not is_active:
+                            continue
+                        
+                        # Get alarm info from mapping
+                        alarm_info = ALARM_FLAG_MAPPING.get(flag_name, {
+                            "name": flag_name.replace("_", " ").title(),
+                            "severity": "info",
+                            "type_id": 0
+                        })
+                        
+                        # Extract location
+                        lat_raw = p.get("latitude")
+                        lng_raw = p.get("longitude")
+                        latitude = GPSAdapter.convert_raw_coords_to_decimal(lat_raw)
+                        longitude = GPSAdapter.convert_raw_coords_to_decimal(lng_raw)
+                        
+                        # Extract timestamp
+                        ts = p.get("time") or p.get("timestamp")
+                        timestamp_ms = GPSAdapter.convert_timestamp_to_ms(ts)
+                        
+                        if timestamp_ms is None:
+                            continue
+                        
+                        # Deduplicate
+                        alarm_key = (flag_name, timestamp_ms)
+                        if alarm_key in seen_alarms:
+                            continue
+                        seen_alarms.add(alarm_key)
+                        
+                        # Create alarm DTO using correct field names
+                        alarm = AlarmDto(
+                            alarm_id=f"{device_id}_{flag_name}_{timestamp_ms}",
+                            device_id=device_id,
+                            type_id=alarm_info["type_id"],
+                            level=alarm_info["severity"],
+                            message=alarm_info["name"],
+                            timestamp_ms=timestamp_ms,
+                            latitude=latitude,
+                            longitude=longitude,
+                            speed=p.get("speed", 0) / 10.0 if p.get("speed") else None,
+                            status="active"
+                        )
+                        alarms.append(alarm)
+                        
+                except Exception as e:
+                    logger.debug(f"Error parsing GPS point for alarms: {e}")
+                    continue
+            
+            # Sort by timestamp (most recent first)
+            alarms.sort(key=lambda a: a.timestamp_ms or 0, reverse=True)
+            
+            if correlation_id:
+                logger.info(f"[{correlation_id}] Extracted {len(alarms)} alarms from {len(raw_points)} GPS points")
+            
+            return alarms
+            
+        except Exception as e:
+            error_msg = f"Error parsing GPS alarms: {e}"
+            if correlation_id:
+                logger.error(f"[{correlation_id}] {error_msg}", exc_info=True)
+            return []
 

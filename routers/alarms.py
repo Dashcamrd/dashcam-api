@@ -6,10 +6,11 @@ from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional
 from pydantic import BaseModel
+from datetime import datetime, time as dt_time
 import logging
 import uuid
 import time
-from adapters import StatisticsAdapter
+from adapters import StatisticsAdapter, GPSAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,120 @@ def get_recent_alarms(
             "critical": alarm_summary.critical_count,
             "warning": alarm_summary.warning_count,
             "info": alarm_summary.info_count
+        }
+    }
+
+
+@router.get("/gps/{device_id}")
+def get_alarms_from_gps(
+    device_id: str,
+    current_user: dict = Depends(get_current_user),
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format (default: today)"),
+    hours: Optional[int] = Query(None, description="Alternative: hours to look back")
+):
+    """
+    Get alarms extracted from GPS track data.
+    
+    This uses /api/v2/gps/search to fetch GPS points and extracts alarm flags.
+    More reliable than the statistics alarms endpoint.
+    
+    Params:
+        - date: Specific date to query (YYYY-MM-DD format)
+        - hours: Hours to look back from now (alternative to date)
+        
+    Note: The vendor API limits queries to 3 days max.
+    """
+    # Verify user has access to this device
+    if not verify_device_access(device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    # Generate correlation ID for this request
+    correlation_id = str(uuid.uuid4())[:8]
+    
+    # Calculate time range
+    current_time = int(time.time())
+    
+    if date:
+        # Parse date string
+        try:
+            date_obj = datetime.strptime(date, "%Y-%m-%d")
+            start_datetime = datetime.combine(date_obj.date(), dt_time.min)
+            end_datetime = datetime.combine(date_obj.date(), dt_time.max)
+            start_time = int(start_datetime.timestamp())
+            end_time = int(end_datetime.timestamp())
+            time_range_label = date
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+    elif hours:
+        # Hours-based query
+        start_time = current_time - (hours * 3600)
+        end_time = current_time
+        time_range_label = f"Last {hours} hours"
+    else:
+        # Default: today
+        today = datetime.now()
+        start_datetime = datetime.combine(today.date(), dt_time.min)
+        end_datetime = datetime.combine(today.date(), dt_time.max)
+        start_time = int(start_datetime.timestamp())
+        end_time = int(end_datetime.timestamp())
+        time_range_label = "Today"
+    
+    # Ensure we don't exceed 3-day limit
+    max_duration = 3 * 24 * 3600  # 3 days in seconds
+    if end_time - start_time > max_duration:
+        start_time = end_time - max_duration
+        logger.warning(f"[{correlation_id}] Time range exceeded 3 days, limiting to last 3 days")
+    
+    logger.info(f"[{correlation_id}] Getting GPS-based alarms for device {device_id} ({time_range_label})")
+    logger.info(f"[{correlation_id}] Time range: {datetime.fromtimestamp(start_time)} to {datetime.fromtimestamp(end_time)}")
+    
+    # Build GPS search request
+    track_data = {
+        "deviceId": device_id,
+        "startTime": start_time,
+        "endTime": end_time
+    }
+    
+    # Call manufacturer API (same as track playback)
+    result = manufacturer_api.query_detailed_track(track_data)
+    
+    # Log response for debugging
+    import json
+    logger.info(f"[{correlation_id}] 🔍 GPS SEARCH RESPONSE CODE: {result.get('code')}")
+    
+    # Check for errors
+    if result.get("code") not in [200, 0]:
+        error_msg = result.get("message", "Unknown error")
+        logger.error(f"[{correlation_id}] Vendor API error: {error_msg}")
+        return {
+            "success": False,
+            "device_id": device_id,
+            "time_range": time_range_label,
+            "alarms": [],
+            "total_alarms": 0,
+            "message": f"Failed to fetch GPS data: {error_msg}"
+        }
+    
+    # Parse alarms from GPS data
+    alarms = GPSAdapter.parse_gps_alarms(result, device_id, correlation_id)
+    
+    # Count by severity
+    critical_count = sum(1 for a in alarms if a.level == "critical")
+    warning_count = sum(1 for a in alarms if a.level == "warning")
+    info_count = sum(1 for a in alarms if a.level == "info")
+    
+    logger.info(f"[{correlation_id}] Found {len(alarms)} alarms (critical: {critical_count}, warning: {warning_count}, info: {info_count})")
+    
+    return {
+        "success": True,
+        "device_id": device_id,
+        "time_range": time_range_label,
+        "alarms": [a.model_dump(by_alias=False) for a in alarms],
+        "total_alarms": len(alarms),
+        "alarm_summary": {
+            "critical": critical_count,
+            "warning": warning_count,
+            "info": info_count
         }
     }
 
