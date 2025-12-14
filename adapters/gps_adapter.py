@@ -488,8 +488,35 @@ class GPSAdapter(BaseAdapter):
             # Sort by timestamp (most recent first)
             alarms.sort(key=lambda a: a.timestamp_ms or 0, reverse=True)
             
+            # 🔍 Detailed logging of alarm flags found in raw data
             if correlation_id:
                 logger.info(f"[{correlation_id}] Extracted {len(alarms)} alarms from {len(raw_points)} GPS points")
+                
+                # Log unique alarm flag names found across all points
+                all_flags_seen = set()
+                points_with_flags = 0
+                for p in raw_points:
+                    alarm_flags = p.get("alarmFlags", {})
+                    if alarm_flags:
+                        points_with_flags += 1
+                        for flag_name, is_active in alarm_flags.items():
+                            if is_active:
+                                all_flags_seen.add(flag_name)
+                
+                logger.info(f"[{correlation_id}] GPS points with alarmFlags field: {points_with_flags}/{len(raw_points)}")
+                
+                if all_flags_seen:
+                    logger.info(f"[{correlation_id}] 🚨 Active alarm flags found: {sorted(all_flags_seen)}")
+                else:
+                    logger.info(f"[{correlation_id}] ⚪ No active alarm flags found in any GPS point")
+                    # Log sample of what alarmFlags look like (first 3 points with the field)
+                    sample_points = [p for p in raw_points[:10] if p.get("alarmFlags")]
+                    if sample_points:
+                        logger.info(f"[{correlation_id}] 🔍 Sample alarmFlags structure: {sample_points[0].get('alarmFlags')}")
+                    else:
+                        # Log keys available in GPS points
+                        if raw_points:
+                            logger.info(f"[{correlation_id}] 🔍 GPS point keys available: {list(raw_points[0].keys())}")
             
             return alarms
             

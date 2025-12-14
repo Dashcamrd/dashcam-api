@@ -186,7 +186,21 @@ def get_alarms_from_gps(
     warning_count = sum(1 for a in alarms if a.level == "warning")
     info_count = sum(1 for a in alarms if a.level == "info")
     
-    logger.info(f"[{correlation_id}] Found {len(alarms)} alarms (critical: {critical_count}, warning: {warning_count}, info: {info_count})")
+    # 🔍 Detailed logging of alarm types found
+    logger.info(f"[{correlation_id}] ===== GPS ALARMS SUMMARY =====")
+    logger.info(f"[{correlation_id}] Total alarms found: {len(alarms)}")
+    logger.info(f"[{correlation_id}] By severity - Critical: {critical_count}, Warning: {warning_count}, Info: {info_count}")
+    
+    # Log alarm type breakdown
+    alarm_types = {}
+    for a in alarms:
+        alarm_type = a.message or "Unknown"
+        alarm_types[alarm_type] = alarm_types.get(alarm_type, 0) + 1
+    
+    for alarm_type, count in sorted(alarm_types.items(), key=lambda x: -x[1]):
+        logger.info(f"[{correlation_id}]   📍 {alarm_type}: {count}")
+    
+    logger.info(f"[{correlation_id}] ==============================")
     
     return {
         "success": True,
