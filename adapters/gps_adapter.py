@@ -8,29 +8,92 @@ from .base_adapter import BaseAdapter
 
 logger = logging.getLogger(__name__)
 
-# Alarm type mappings for alarmFlags
+# =============================================================================
+# ALARM MAPPINGS - 4 Families from vendor GPS response
+# =============================================================================
+
+# 1️⃣ alarmFlags (31 types) - High-level vehicle/platform alarms
 ALARM_FLAG_MAPPING = {
+    # Emergency & Safety
     "emergency": {"name": "Emergency SOS", "severity": "critical", "type_id": 1},
     "overspeed": {"name": "Overspeed", "severity": "warning", "type_id": 2},
     "fatigueDriving": {"name": "Driver Fatigue", "severity": "warning", "type_id": 3},
-    "prewarning": {"name": "Pre-warning", "severity": "info", "type_id": 4},
-    "gnssModuleFailure": {"name": "GPS Module Failure", "severity": "warning", "type_id": 5},
-    "gnssAntennaShortCircuit": {"name": "GPS Antenna Short", "severity": "warning", "type_id": 6},
-    "collision": {"name": "Collision Warning", "severity": "critical", "type_id": 7},
-    "rollover": {"name": "Rollover Alert", "severity": "critical", "type_id": 8},
-    "illegalIgnition": {"name": "Illegal Ignition", "severity": "warning", "type_id": 9},
-    "illegalMobileDevice": {"name": "Illegal Mobile Device", "severity": "warning", "type_id": 10},
-    "frontCollision": {"name": "Front Collision Warning", "severity": "critical", "type_id": 11},
-    "laneDeparture": {"name": "Lane Departure Warning", "severity": "info", "type_id": 12},
-    "pedestrianCollision": {"name": "Pedestrian Collision Warning", "severity": "critical", "type_id": 13},
-    "headwayMonitoring": {"name": "Following Too Close", "severity": "warning", "type_id": 14},
-    "harshBraking": {"name": "Harsh Braking", "severity": "warning", "type_id": 15},
-    "harshAcceleration": {"name": "Harsh Acceleration", "severity": "info", "type_id": 16},
-    "smoking": {"name": "Smoking Detected", "severity": "warning", "type_id": 17},
-    "phoneUse": {"name": "Phone Use Detected", "severity": "warning", "type_id": 18},
-    "driverAbsence": {"name": "Driver Absence", "severity": "warning", "type_id": 19},
-    "yawning": {"name": "Yawning Detected", "severity": "info", "type_id": 20},
-    "distracted": {"name": "Driver Distracted", "severity": "warning", "type_id": 21},
+    "dangerWarning": {"name": "Danger Warning", "severity": "warning", "type_id": 4},
+    
+    # GPS/GNSS Issues
+    "gnssFault": {"name": "GPS Fault", "severity": "info", "type_id": 5},
+    "gnssAntennaCut": {"name": "GPS Antenna Cut", "severity": "warning", "type_id": 6},
+    "gnssAntennaShortCircuit": {"name": "GPS Antenna Short", "severity": "warning", "type_id": 7},
+    
+    # Power Issues
+    "mainPowerUndervoltage": {"name": "Low Battery Voltage", "severity": "warning", "type_id": 8},
+    "mainPowerFailure": {"name": "Power Failure", "severity": "critical", "type_id": 9},
+    
+    # Hardware Faults
+    "lcdFault": {"name": "LCD Fault", "severity": "info", "type_id": 10},
+    "ttsFault": {"name": "TTS Fault", "severity": "info", "type_id": 11},
+    "cameraFault": {"name": "Camera Fault", "severity": "warning", "type_id": 12},
+    "icCardFault": {"name": "IC Card Fault", "severity": "info", "type_id": 13},
+    "vssFault": {"name": "Speed Sensor Fault", "severity": "warning", "type_id": 14},
+    
+    # Driving Warnings
+    "overspeedWarning": {"name": "Overspeed Warning", "severity": "warning", "type_id": 15},
+    "fatigueDrivingWarning": {"name": "Fatigue Driving Warning", "severity": "warning", "type_id": 16},
+    "illegalDrivingAlarm": {"name": "Illegal Driving", "severity": "warning", "type_id": 17},
+    "tirePressureWarning": {"name": "Tire Pressure Warning", "severity": "warning", "type_id": 18},
+    "rightTurnBlindSpotAlarm": {"name": "Right Turn Blind Spot", "severity": "warning", "type_id": 19},
+    
+    # Time-based Alerts
+    "cumulativeDrivingOvertime": {"name": "Driving Overtime", "severity": "warning", "type_id": 20},
+    "parkingOvertime": {"name": "Parking Overtime", "severity": "info", "type_id": 21},
+    
+    # Geofence & Route
+    "areaEntryExit": {"name": "Geofence Entry/Exit", "severity": "info", "type_id": 22},
+    "routeEntryExit": {"name": "Route Entry/Exit", "severity": "info", "type_id": 23},
+    "routeDrivingTimeAbnormal": {"name": "Route Time Abnormal", "severity": "warning", "type_id": 24},
+    "routeDeviation": {"name": "Route Deviation", "severity": "warning", "type_id": 25},
+    
+    # Security & Theft
+    "fuelAbnormal": {"name": "Fuel Abnormal", "severity": "warning", "type_id": 26},
+    "vehicleStolen": {"name": "Vehicle Stolen", "severity": "critical", "type_id": 27},
+    "illegalIgnition": {"name": "Illegal Ignition", "severity": "warning", "type_id": 28},
+    "illegalMovement": {"name": "Illegal Movement", "severity": "warning", "type_id": 29},
+    
+    # Collision & Rollover
+    "collisionWarning": {"name": "Collision Warning", "severity": "critical", "type_id": 30},
+    "rolloverWarning": {"name": "Rollover Warning", "severity": "critical", "type_id": 31},
+}
+
+# 2️⃣ ADAS alarmEventType (from additionalInfos id=100)
+ADAS_EVENT_MAPPING = {
+    1: {"name": "Front Collision Warning", "severity": "critical"},
+    2: {"name": "Lane Departure Warning", "severity": "warning"},
+    3: {"name": "Pedestrian Collision Warning", "severity": "critical"},
+    4: {"name": "Following Too Close", "severity": "warning"},
+    5: {"name": "Frequent Lane Change", "severity": "info"},
+    6: {"name": "Road Sign Recognition", "severity": "info"},
+    7: {"name": "Obstacle Detection", "severity": "warning"},
+    8: {"name": "Blind Spot Warning", "severity": "warning"},
+    16: {"name": "ADAS Camera Blocked", "severity": "warning"},
+    17: {"name": "Driver Abnormal", "severity": "warning"},
+}
+
+# 3️⃣ Video alarm types (from additionalInfos id=20)
+VIDEO_ALARM_MAPPING = {
+    "signalLost": {"name": "Video Signal Lost", "severity": "warning"},
+    "signalBlocked": {"name": "Video Signal Blocked", "severity": "warning"},
+    "storageFault": {"name": "Storage Fault", "severity": "warning"},
+    "otherVideoFault": {"name": "Video Fault", "severity": "info"},
+    "busOverload": {"name": "Video Bus Overload", "severity": "warning"},
+    "abnormalDriving": {"name": "Abnormal Driving (Video)", "severity": "warning"},
+    "specialAlarmRecording": {"name": "Special Alarm Recording", "severity": "info"},
+}
+
+# 4️⃣ Driver behavior types (from additionalInfos id=24)
+DRIVER_BEHAVIOR_MAPPING = {
+    "fatigue": {"name": "Driver Fatigue Detected", "severity": "warning"},
+    "phoneCall": {"name": "Phone Call Detected", "severity": "warning"},
+    "smoking": {"name": "Smoking Detected", "severity": "warning"},
 }
 
 
@@ -389,10 +452,11 @@ class GPSAdapter(BaseAdapter):
         correlation_id: Optional[str] = None
     ) -> List[AlarmDto]:
         """
-        Parse GPS search response and extract alarms from alarmFlags.
-        
-        Each GPS point may have an alarmFlags object with boolean fields.
-        We extract points where any alarm flag is True.
+        Parse GPS search response and extract alarms from ALL 4 alarm families:
+        1. alarmFlags (31 types) - High-level vehicle/platform alarms
+        2. adasAlarm (additionalInfos id=100) - ADAS events
+        3. videoAlarm (additionalInfos id=20) - Video/storage alarms
+        4. abnormalDriving (additionalInfos id=24) - Driver behavior
         
         Args:
             vendor_response: Raw vendor API response from /api/v2/gps/search
@@ -427,63 +491,175 @@ class GPSAdapter(BaseAdapter):
             alarms: List[AlarmDto] = []
             seen_alarms = set()  # Deduplicate by (alarm_type, timestamp)
             
+            # Stats for logging
+            stats = {
+                "alarmFlags": 0,
+                "adasAlarm": 0,
+                "videoAlarm": 0,
+                "abnormalDriving": 0
+            }
+            
             for p in raw_points:
                 try:
-                    alarm_flags = p.get("alarmFlags", {})
+                    # Extract common location/time for this GPS point
+                    lat_raw = p.get("latitude")
+                    lng_raw = p.get("longitude")
+                    latitude = GPSAdapter.convert_raw_coords_to_decimal(lat_raw)
+                    longitude = GPSAdapter.convert_raw_coords_to_decimal(lng_raw)
+                    ts = p.get("time") or p.get("timestamp")
+                    timestamp_ms = GPSAdapter.convert_timestamp_to_ms(ts)
+                    speed = p.get("speed", 0) / 10.0 if p.get("speed") else None
                     
-                    # Skip if no alarm flags or empty
-                    if not alarm_flags:
+                    if timestamp_ms is None:
                         continue
                     
-                    # Check each alarm flag
+                    # =========================================================
+                    # 1️⃣ Parse alarmFlags (31 types)
+                    # =========================================================
+                    alarm_flags = p.get("alarmFlags", {})
                     for flag_name, is_active in alarm_flags.items():
                         if not is_active:
                             continue
                         
-                        # Get alarm info from mapping
                         alarm_info = ALARM_FLAG_MAPPING.get(flag_name, {
                             "name": flag_name.replace("_", " ").title(),
                             "severity": "info",
                             "type_id": 0
                         })
                         
-                        # Extract location
-                        lat_raw = p.get("latitude")
-                        lng_raw = p.get("longitude")
-                        latitude = GPSAdapter.convert_raw_coords_to_decimal(lat_raw)
-                        longitude = GPSAdapter.convert_raw_coords_to_decimal(lng_raw)
-                        
-                        # Extract timestamp
-                        ts = p.get("time") or p.get("timestamp")
-                        timestamp_ms = GPSAdapter.convert_timestamp_to_ms(ts)
-                        
-                        if timestamp_ms is None:
-                            continue
-                        
-                        # Deduplicate
-                        alarm_key = (flag_name, timestamp_ms)
+                        alarm_key = (f"flag_{flag_name}", timestamp_ms)
                         if alarm_key in seen_alarms:
                             continue
                         seen_alarms.add(alarm_key)
                         
-                        # Create alarm DTO using correct field names
-                        alarm = AlarmDto(
-                            alarm_id=f"{device_id}_{flag_name}_{timestamp_ms}",
+                        alarms.append(AlarmDto(
+                            alarm_id=f"{device_id}_flag_{flag_name}_{timestamp_ms}",
                             device_id=device_id,
-                            type_id=alarm_info["type_id"],
+                            type_id=alarm_info.get("type_id", 0),
                             level=alarm_info["severity"],
                             message=alarm_info["name"],
                             timestamp_ms=timestamp_ms,
                             latitude=latitude,
                             longitude=longitude,
-                            speed=p.get("speed", 0) / 10.0 if p.get("speed") else None,
+                            speed=speed,
                             status="active"
-                        )
-                        alarms.append(alarm)
+                        ))
+                        stats["alarmFlags"] += 1
+                    
+                    # =========================================================
+                    # 2️⃣ Parse additionalInfos for ADAS, Video, Driver behavior
+                    # =========================================================
+                    additional_infos = p.get("additionalInfos", [])
+                    for info in additional_infos:
+                        info_id = info.get("id")
+                        
+                        # 2a) ADAS Alarm (id=100)
+                        if info_id == 100:
+                            adas = info.get("adasAlarm", {})
+                            if adas and adas.get("alarmEventType"):
+                                event_type = adas.get("alarmEventType")
+                                alarm_level = adas.get("alarmLevel", 1)
+                                
+                                adas_info = ADAS_EVENT_MAPPING.get(event_type, {
+                                    "name": f"ADAS Event {event_type}",
+                                    "severity": "warning"
+                                })
+                                
+                                # Use ADAS-specific coordinates if available
+                                adas_lat = adas.get("latitude") or latitude
+                                adas_lng = adas.get("longitude") or longitude
+                                adas_ts = GPSAdapter.convert_timestamp_to_ms(adas.get("dateTime")) or timestamp_ms
+                                
+                                alarm_key = (f"adas_{event_type}", adas_ts)
+                                if alarm_key not in seen_alarms:
+                                    seen_alarms.add(alarm_key)
+                                    
+                                    # Higher alarm level = more severe
+                                    severity = "critical" if alarm_level >= 2 else adas_info["severity"]
+                                    
+                                    alarms.append(AlarmDto(
+                                        alarm_id=f"{device_id}_adas_{event_type}_{adas_ts}",
+                                        device_id=device_id,
+                                        type_id=100 + event_type,
+                                        level=severity,
+                                        message=adas_info["name"],
+                                        timestamp_ms=adas_ts,
+                                        latitude=adas_lat,
+                                        longitude=adas_lng,
+                                        speed=adas.get("vehicleSpeed") or speed,
+                                        status="active"
+                                    ))
+                                    stats["adasAlarm"] += 1
+                        
+                        # 2b) Video Alarm (id=20)
+                        elif info_id == 20:
+                            video = info.get("videoAlarm", {})
+                            for flag_name, is_active in video.items():
+                                if not is_active:
+                                    continue
+                                
+                                video_info = VIDEO_ALARM_MAPPING.get(flag_name, {
+                                    "name": flag_name.replace("_", " ").title(),
+                                    "severity": "info"
+                                })
+                                
+                                alarm_key = (f"video_{flag_name}", timestamp_ms)
+                                if alarm_key not in seen_alarms:
+                                    seen_alarms.add(alarm_key)
+                                    
+                                    alarms.append(AlarmDto(
+                                        alarm_id=f"{device_id}_video_{flag_name}_{timestamp_ms}",
+                                        device_id=device_id,
+                                        type_id=200,
+                                        level=video_info["severity"],
+                                        message=video_info["name"],
+                                        timestamp_ms=timestamp_ms,
+                                        latitude=latitude,
+                                        longitude=longitude,
+                                        speed=speed,
+                                        status="active"
+                                    ))
+                                    stats["videoAlarm"] += 1
+                        
+                        # 2c) Abnormal Driving / Driver Behavior (id=24)
+                        elif info_id == 24:
+                            abnormal = info.get("abnormalDriving", {})
+                            behavior = abnormal.get("behaviorType", {})
+                            
+                            for behavior_name, is_active in behavior.items():
+                                if not is_active:
+                                    continue
+                                
+                                driver_info = DRIVER_BEHAVIOR_MAPPING.get(behavior_name, {
+                                    "name": behavior_name.replace("_", " ").title(),
+                                    "severity": "warning"
+                                })
+                                
+                                alarm_key = (f"driver_{behavior_name}", timestamp_ms)
+                                if alarm_key not in seen_alarms:
+                                    seen_alarms.add(alarm_key)
+                                    
+                                    alarms.append(AlarmDto(
+                                        alarm_id=f"{device_id}_driver_{behavior_name}_{timestamp_ms}",
+                                        device_id=device_id,
+                                        type_id=300,
+                                        level=driver_info["severity"],
+                                        message=driver_info["name"],
+                                        timestamp_ms=timestamp_ms,
+                                        latitude=latitude,
+                                        longitude=longitude,
+                                        speed=speed,
+                                        status="active"
+                                    ))
+                                    stats["abnormalDriving"] += 1
                         
                 except Exception as e:
                     logger.debug(f"Error parsing GPS point for alarms: {e}")
                     continue
+            
+            # Log stats for each alarm family
+            if correlation_id:
+                logger.info(f"[{correlation_id}] 📊 Alarms by family: alarmFlags={stats['alarmFlags']}, ADAS={stats['adasAlarm']}, Video={stats['videoAlarm']}, Driver={stats['abnormalDriving']}")
             
             # Sort by timestamp (most recent first)
             alarms.sort(key=lambda a: a.timestamp_ms or 0, reverse=True)
