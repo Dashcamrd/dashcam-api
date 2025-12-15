@@ -80,20 +80,30 @@ class BaseAdapter:
     # For Saudi Arabia devices: UTC+3
     DEVICE_TZ = timezone(timedelta(hours=3))  # Saudi Arabia UTC+3
     
+    # Vendor integer timestamps (lastOnlineTime, etc.) are 5 hours behind actual UTC
+    # This is due to China (UTC+8) to Saudi (UTC+3) offset in vendor's system
+    INTEGER_TS_CORRECTION_HOURS = 5
+    
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
         Convert vendor timestamp to milliseconds.
-        Integer timestamps are proper UTC epoch (no conversion needed).
+        
+        Integer timestamps need +5 hours correction (vendor offset issue).
+        String timestamps are treated as UTC.
         """
         if timestamp is None:
             return None
         
         if isinstance(timestamp, int):
+            # Add 5 hours correction for vendor integer timestamps
+            correction_seconds = BaseAdapter.INTEGER_TS_CORRECTION_HOURS * 3600
             if timestamp < 1_000_000_000_000:
-                return timestamp * 1000
+                # Seconds - add correction then convert to ms
+                return (timestamp + correction_seconds) * 1000
             else:
-                return timestamp
+                # Already milliseconds - add correction in ms
+                return timestamp + (correction_seconds * 1000)
         
         if isinstance(timestamp, str):
             try:
