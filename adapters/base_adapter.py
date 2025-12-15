@@ -79,22 +79,25 @@ class BaseAdapter:
     # Vendor timezone: China time (UTC+8)
     VENDOR_TZ = timezone(timedelta(hours=8))
     
-    # Vendor integer timestamps are offset due to timezone bug
-    # Correction: China (UTC+8) - Saudi (UTC+3) = 5 hours
-    VENDOR_INT_CORRECTION_SECONDS = 5 * 3600  # 5 hours = 18000 seconds
+    # Vendor sends timestamps that appear to be China local time encoded as UTC
+    # This means their timestamps are 8 hours ahead of actual UTC
+    # For Saudi Arabia users (UTC+3), the display would be:
+    #   Vendor timestamp -> treat as UTC -> convert to Saudi local (+3)
+    # But since vendor timestamp is actually China local time, it's 8 hours off
+    # To fix: subtract (8-3)=5 hours from vendor timestamps
+    VENDOR_TIMEZONE_OFFSET_HOURS = 5  # Hours to subtract from vendor timestamps
     
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
         Convert vendor timestamp to milliseconds.
         
-        Vendor may send:
-        - Unix seconds (e.g., 1735888000) - corrected for timezone offset
-        - Unix milliseconds (e.g., 1735888000000) - corrected for timezone offset
-        - String format (e.g., "2024-01-01 12:00:00") in China time (UTC+8)
+        Vendor sends timestamps in China local time (UTC+8) but encodes them
+        as if they were UTC. We need to correct by subtracting 5 hours for
+        Saudi Arabia (UTC+3) users.
         
-        Note: Vendor integer timestamps are 5 hours behind due to timezone bug.
-        We add 5 hours to correct for Saudi Arabia (UTC+3) users.
+        Correction: China(UTC+8) - Saudi(UTC+3) = 5 hours behind
+        So vendor time appears 5 hours ahead, we subtract 5 hours.
         
         Args:
             timestamp: Timestamp in various formats
@@ -105,15 +108,18 @@ class BaseAdapter:
         if timestamp is None:
             return None
         
+        # Calculate correction in seconds (subtract 5 hours)
+        correction_seconds = -BaseAdapter.VENDOR_TIMEZONE_OFFSET_HOURS * 3600
+        
         # If it's already milliseconds (timestamp >= year 2286 in seconds = ~7e9)
         if isinstance(timestamp, int):
             if timestamp < 1_000_000_000_000:  # Less than year 2286 in ms
-                # Likely seconds - add correction for vendor timezone bug
-                corrected = timestamp + BaseAdapter.VENDOR_INT_CORRECTION_SECONDS
+                # Likely seconds - apply timezone correction
+                corrected = timestamp + correction_seconds
                 return corrected * 1000
             else:
-                # Already milliseconds - add correction for vendor timezone bug
-                corrected = timestamp + (BaseAdapter.VENDOR_INT_CORRECTION_SECONDS * 1000)
+                # Already milliseconds - apply timezone correction
+                corrected = timestamp + (correction_seconds * 1000)
                 return corrected
         
         # If it's a string, try to parse
