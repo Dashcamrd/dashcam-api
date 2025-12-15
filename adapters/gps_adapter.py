@@ -351,17 +351,19 @@ class GPSAdapter(BaseAdapter):
                     if latitude is None or longitude is None:
                         continue
                     
-                    # Handle timestamp
+                    # Handle timestamp - treat string as Saudi local time (UTC+3)
                     ts = p.get("time") or p.get("timestamp")
                     timestamp_ms = GPSAdapter.convert_track_timestamp_to_ms(ts)
                     if timestamp_ms is None:
                         continue  # Skip points without valid timestamp
                     
-                    # DEBUG: Log first few timestamps to understand format
+                    # DEBUG: Log first few timestamps
                     if len(points) < 3:
-                        from datetime import datetime as dt_debug
+                        from datetime import datetime as dt_debug, timezone as tz_debug, timedelta as td_debug
                         utc_time = dt_debug.utcfromtimestamp(timestamp_ms / 1000)
-                        logger.info(f"🕐 TRACK DEBUG: raw_ts={ts}, ms={timestamp_ms}, UTC={utc_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                        saudi_tz = tz_debug(td_debug(hours=3))
+                        saudi_time = dt_debug.fromtimestamp(timestamp_ms / 1000, tz=saudi_tz)
+                        logger.info(f"🕐 TRACK DEBUG: raw={ts}, UTC={utc_time.strftime('%H:%M:%S')}, Saudi={saudi_time.strftime('%H:%M:%S')}")
                     
                     # Handle speed
                     speed_raw = p.get("speed")

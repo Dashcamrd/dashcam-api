@@ -76,14 +76,15 @@ class BaseAdapter:
             return raw_coord / 1_000_000.0
         return None
     
-    # Vendor timezone: China time (UTC+8)
-    VENDOR_TZ = timezone(timedelta(hours=8))
+    # Vendor sends string timestamps in device's local timezone
+    # For Saudi Arabia devices: UTC+3
+    DEVICE_TZ = timezone(timedelta(hours=3))  # Saudi Arabia UTC+3
     
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
-        Convert vendor timestamp to milliseconds - NO CORRECTION.
-        Pass through as-is for debugging.
+        Convert vendor timestamp to milliseconds.
+        Integer timestamps are proper UTC epoch (no conversion needed).
         """
         if timestamp is None:
             return None
@@ -111,10 +112,42 @@ class BaseAdapter:
     @staticmethod
     def convert_track_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
-        Convert track history timestamp - NO CORRECTION for now.
-        Same as convert_timestamp_to_ms for debugging.
+        Convert track history timestamp to milliseconds.
+        
+        String timestamps from track history are in DEVICE LOCAL TIME (Saudi = UTC+3).
+        We need to treat them as Saudi time and convert to proper UTC epoch.
+        
+        Example:
+        - Vendor sends: "2025-12-15 18:38:00" (Saudi local time)
+        - We interpret as: 18:38 Saudi = 15:38 UTC
+        - Store as UTC epoch milliseconds
+        - Flutter displays in local timezone correctly
         """
-        return BaseAdapter.convert_timestamp_to_ms(timestamp)
+        if timestamp is None:
+            return None
+        
+        # Integer timestamps are already UTC epoch
+        if isinstance(timestamp, int):
+            if timestamp < 1_000_000_000_000:
+                return timestamp * 1000
+            else:
+                return timestamp
+        
+        # String timestamps are in device local time (Saudi = UTC+3)
+        if isinstance(timestamp, str):
+            try:
+                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                # Treat as Saudi local time (UTC+3), not UTC
+                dt = dt.replace(tzinfo=BaseAdapter.DEVICE_TZ)
+                return int(dt.timestamp() * 1000)
+            except ValueError:
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    return int(dt.timestamp() * 1000)
+                except (ValueError, AttributeError):
+                    return None
+        
+        return None
     
     @staticmethod
     def extract_nested_value(data: Dict, path: str, default: Any = None) -> Any:
