@@ -351,11 +351,17 @@ class GPSAdapter(BaseAdapter):
                     if latitude is None or longitude is None:
                         continue
                     
-                    # Handle timestamp - use track-specific conversion with timezone correction
+                    # Handle timestamp
                     ts = p.get("time") or p.get("timestamp")
                     timestamp_ms = GPSAdapter.convert_track_timestamp_to_ms(ts)
                     if timestamp_ms is None:
                         continue  # Skip points without valid timestamp
+                    
+                    # DEBUG: Log first few timestamps to understand format
+                    if len(points) < 3:
+                        from datetime import datetime as dt_debug
+                        utc_time = dt_debug.utcfromtimestamp(timestamp_ms / 1000)
+                        logger.info(f"🕐 TRACK DEBUG: raw_ts={ts}, ms={timestamp_ms}, UTC={utc_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     
                     # Handle speed
                     speed_raw = p.get("speed")
