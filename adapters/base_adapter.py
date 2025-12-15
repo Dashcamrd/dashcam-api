@@ -79,13 +79,18 @@ class BaseAdapter:
     # Vendor timezone: China time (UTC+8)
     VENDOR_TZ = timezone(timedelta(hours=8))
     
+    # Track history timestamps are in China local time encoded as UTC
+    # We need to add 5 hours to correct for Saudi Arabia (UTC+3) users
+    # China (UTC+8) - Saudi (UTC+3) = 5 hours offset
+    TRACK_HISTORY_CORRECTION_HOURS = 5
+    
     @staticmethod
     def convert_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
         """
-        Convert vendor timestamp to milliseconds.
+        Convert vendor timestamp to milliseconds (no timezone correction).
         
-        Vendor sends Unix timestamps that should be treated as-is (no correction).
-        The timestamps are proper UTC epoch values.
+        Used for: lastOnlineTime, device status timestamps
+        These are already proper UTC epoch values.
         
         Args:
             timestamp: Timestamp in various formats
@@ -108,14 +113,65 @@ class BaseAdapter:
         # If it's a string, try to parse
         if isinstance(timestamp, str):
             try:
-                # Try common formats - vendor sends China time (UTC+8)
+                # Try common formats
                 dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-                # Explicitly set timezone to China time (UTC+8)
-                dt = dt.replace(tzinfo=BaseAdapter.VENDOR_TZ)
+                dt = dt.replace(tzinfo=timezone.utc)
                 return int(dt.timestamp() * 1000)
             except ValueError:
                 try:
                     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    return int(dt.timestamp() * 1000)
+                except (ValueError, AttributeError):
+                    logger.warning(f"Could not parse timestamp string: {timestamp}")
+                    return None
+        
+        return None
+    
+    @staticmethod
+    def convert_track_timestamp_to_ms(timestamp: Optional[Any]) -> Optional[int]:
+        """
+        Convert track history timestamp to milliseconds WITH timezone correction.
+        
+        Used for: GPS track history points (gps.time field)
+        These timestamps are in China local time (UTC+8) encoded as UTC.
+        We add 5 hours to correct for Saudi Arabia (UTC+3) display.
+        
+        Args:
+            timestamp: Timestamp in various formats
+        
+        Returns:
+            Unix timestamp in milliseconds (corrected for Saudi timezone)
+        """
+        if timestamp is None:
+            return None
+        
+        # Calculate correction in seconds
+        correction_seconds = BaseAdapter.TRACK_HISTORY_CORRECTION_HOURS * 3600
+        
+        # If it's an integer timestamp
+        if isinstance(timestamp, int):
+            if timestamp < 1_000_000_000_000:  # Less than year 2286 in ms
+                # Seconds - apply correction and convert to milliseconds
+                corrected = timestamp + correction_seconds
+                return corrected * 1000
+            else:
+                # Already milliseconds - apply correction
+                corrected = timestamp + (correction_seconds * 1000)
+                return corrected
+        
+        # If it's a string, parse and apply correction
+        if isinstance(timestamp, str):
+            try:
+                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                # Add correction hours
+                dt = dt + timedelta(hours=BaseAdapter.TRACK_HISTORY_CORRECTION_HOURS)
+                dt = dt.replace(tzinfo=timezone.utc)
+                return int(dt.timestamp() * 1000)
+            except ValueError:
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    # Add correction
+                    dt = dt + timedelta(hours=BaseAdapter.TRACK_HISTORY_CORRECTION_HOURS)
                     return int(dt.timestamp() * 1000)
                 except (ValueError, AttributeError):
                     logger.warning(f"Could not parse timestamp string: {timestamp}")

@@ -351,9 +351,9 @@ class GPSAdapter(BaseAdapter):
                     if latitude is None or longitude is None:
                         continue
                     
-                    # Handle timestamp
+                    # Handle timestamp - use track-specific conversion with timezone correction
                     ts = p.get("time") or p.get("timestamp")
-                    timestamp_ms = GPSAdapter.convert_timestamp_to_ms(ts)
+                    timestamp_ms = GPSAdapter.convert_track_timestamp_to_ms(ts)
                     if timestamp_ms is None:
                         continue  # Skip points without valid timestamp
                     
