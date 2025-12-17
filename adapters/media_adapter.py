@@ -206,7 +206,8 @@ class MediaAdapter(BaseAdapter):
         """
         return {
             "deviceId": device_id,
-            "channels": channels or [1]
+            "channels": channels or [1],
+            "controlType": 2  # 2 = close playback
         }
     
     @staticmethod

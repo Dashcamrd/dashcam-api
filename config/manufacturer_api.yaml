@@ -153,10 +153,10 @@ profiles:
           optional: [streamType]
 
       media_close_playback:
-        path: /api/v1/media/closePlayback
+        path: /api/v1/media/playbackControl
         method: POST
         request:
-          required: [deviceId, channels]
+          required: [deviceId, channels, controlType]
 
       media_get_file_list:
         path: /api/v1/media/getFileList
