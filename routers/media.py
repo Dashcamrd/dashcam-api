@@ -322,13 +322,14 @@ def get_file_list(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
-    # Parse date and create start/end of day timestamps
+    # Parse date and create start/end of day timestamps in Saudi time (GMT+3)
     try:
+        saudi_tz = timezone(timedelta(hours=3))
         date_obj = datetime.strptime(request.date, "%Y-%m-%d")
-        start_of_day = date_obj.replace(hour=0, minute=0, second=0)
-        end_of_day = date_obj.replace(hour=23, minute=59, second=59)
+        start_of_day = date_obj.replace(hour=0, minute=0, second=0, tzinfo=saudi_tz)
+        end_of_day = date_obj.replace(hour=23, minute=59, second=59, tzinfo=saudi_tz)
         
         # Convert to Unix timestamps
         start_timestamp = int(start_of_day.timestamp())
