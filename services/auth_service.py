@@ -162,8 +162,8 @@ def login_user(user: UserLogin):
     finally:
         db.close()
 
-def change_password(invoice_no: str, new_password: str, db: Session = None):
-    """Change user password"""
+def change_password(invoice_no: str, current_password: str, new_password: str, db: Session = None):
+    """Change user password after verifying current password"""
     if db is None:
         db = SessionLocal()
         close_db = True
@@ -175,9 +175,14 @@ def change_password(invoice_no: str, new_password: str, db: Session = None):
         if not db_user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        # Verify current password
+        if not verify_password(current_password, db_user.password_hash):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        
+        # Update to new password
         db_user.password_hash = hash_password(new_password)
         db.commit()
-        return {"msg": "Password changed successfully"}
+        return {"message": "Password changed successfully"}
     finally:
         if close_db:
             db.close()

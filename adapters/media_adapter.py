@@ -164,13 +164,13 @@ class MediaAdapter(BaseAdapter):
         from datetime import datetime, timezone, timedelta
         
         # Convert time strings to Unix timestamps (seconds)
-        # IMPORTANT: We assume the input time is in GMT+8 (UTC+8) timezone
-        # This is the timezone used by the manufacturer API and dashcam devices
-        gmt8 = timezone(timedelta(hours=8))
+        # IMPORTANT: Input time is in Saudi local time (GMT+3)
+        # User selects times in their local timezone (Saudi Arabia)
+        saudi_tz = timezone(timedelta(hours=3))
         try:
-            # Parse as naive datetime, then explicitly set to GMT+8
-            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt8)
-            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=gmt8)
+            # Parse as naive datetime, then explicitly set to Saudi time (GMT+3)
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=saudi_tz)
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=saudi_tz)
             start_timestamp = int(start_dt.timestamp())
             end_timestamp = int(end_dt.timestamp())
         except ValueError as e:

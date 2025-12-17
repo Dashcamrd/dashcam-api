@@ -24,6 +24,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 class ChangePassword(BaseModel):
+    current_password: str
     new_password: str
 
 class PasswordResetRequest(BaseModel):

@@ -27,9 +27,13 @@ def change_password(
 ):
     """
     Change the current user's password.
-    Requires valid JWT token.
+    Requires valid JWT token and current password verification.
     """
-    return auth_service.change_password(current_user["invoice_no"], password_data.new_password)
+    return auth_service.change_password(
+        current_user["invoice_no"], 
+        password_data.current_password,
+        password_data.new_password
+    )
 
 @router.post("/reset-password")
 def reset_password(reset_request: PasswordResetRequest):
