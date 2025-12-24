@@ -62,7 +62,7 @@ def create_user(user_data: dict, db: Session = None):
             db.close()
 
 def register_user(user: UserCreate):
-    """Register a new user with invoice number, device ID, name, email, and password"""
+    """Register a new user with invoice number, device ID(s), name, email, and password"""
     from models.device_db import DeviceDB
     import logging
     
@@ -81,43 +81,58 @@ def register_user(user: UserCreate):
             if existing_email:
                 raise HTTPException(status_code=400, detail="Email already exists")
         
-        # Check if device ID is already assigned to another user
-        if user.device_id:
-            existing_device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
-            if existing_device and existing_device.assigned_user_id is not None:
-                raise HTTPException(status_code=400, detail="Device ID is already registered to another user")
+        # Combine device_id and device_ids into a single list (backward compatible)
+        all_device_ids = []
+        if user.device_ids:
+            all_device_ids.extend([d.strip() for d in user.device_ids if d and d.strip()])
+        elif user.device_id:
+            # Backward compatibility: single device_id
+            all_device_ids.append(user.device_id.strip())
         
-        # Create new user
+        # Remove duplicates while preserving order
+        all_device_ids = list(dict.fromkeys(all_device_ids))
+        
+        # Check ALL device IDs before creating user - reject if any is already assigned
+        for device_id in all_device_ids:
+            existing_device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+            if existing_device and existing_device.assigned_user_id is not None:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Device ID '{device_id}' is already registered to another user"
+                )
+        
+        # Create new user (store first device_id for backward compatibility)
+        primary_device_id = all_device_ids[0] if all_device_ids else None
         db_user = UserDB(
             invoice_no=user.invoice_no,
             password_hash=hash_password(user.password),
             name=user.name,
             email=user.email,
-            device_id=user.device_id if user.device_id else None,
+            device_id=primary_device_id,
             is_admin=False  # Default to regular user
         )
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
         
-        # Link device to user if device_id is provided
-        device_created = False
-        device_error = None
+        # Link/create all devices for this user
+        devices_status = []
         
-        if user.device_id:
+        for device_id in all_device_ids:
+            device_result = {"device_id": device_id, "created": False, "error": None}
             try:
-                device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
+                device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
                 if device:
-                    # Device exists - link it to the user
+                    # Device exists but unassigned - link it to the user
                     device.assigned_user_id = db_user.id
                     db.commit()
-                    device_created = True
-                    logger.info(f"Device {user.device_id} linked to user {db_user.id}")
+                    device_result["created"] = True
+                    logger.info(f"Device {device_id} linked to user {db_user.id}")
                 else:
                     # Device doesn't exist - create it
                     new_device = DeviceDB(
-                        device_id=user.device_id,
-                        name=f"Device {user.device_id}",
+                        device_id=device_id,
+                        name=f"Device {device_id}",
                         assigned_user_id=db_user.id,
                         org_id="ORG001",  # Default org
                         status="offline",
@@ -125,14 +140,15 @@ def register_user(user: UserCreate):
                     )
                     db.add(new_device)
                     db.commit()
-                    device_created = True
-                    logger.info(f"Device {user.device_id} created and assigned to user {db_user.id}")
+                    device_result["created"] = True
+                    logger.info(f"Device {device_id} created and assigned to user {db_user.id}")
             except Exception as e:
                 # Log the error but don't fail registration
-                device_error = str(e)
-                logger.error(f"Failed to create/link device {user.device_id}: {e}")
-                # Rollback just the device transaction
+                device_result["error"] = str(e)
+                logger.error(f"Failed to create/link device {device_id}: {e}")
                 db.rollback()
+            
+            devices_status.append(device_result)
         
         # Create access token for immediate login
         token = create_access_token({
@@ -151,16 +167,14 @@ def register_user(user: UserCreate):
                 "name": db_user.name,
                 "email": db_user.email,
                 "device_id": db_user.device_id,
+                "device_ids": all_device_ids,
                 "is_admin": db_user.is_admin
             }
         }
         
-        # Add device status to response
-        if user.device_id:
-            response["device_status"] = {
-                "created": device_created,
-                "error": device_error
-            }
+        # Add devices status to response
+        if all_device_ids:
+            response["devices_status"] = devices_status
         
         return response
         

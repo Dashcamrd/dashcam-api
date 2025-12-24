@@ -1,10 +1,11 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 class UserCreate(BaseModel):
     invoice_no: str
-    device_id: Optional[str] = None
+    device_id: Optional[str] = None  # Single device (backward compatible)
+    device_ids: Optional[List[str]] = None  # Multiple devices
     name: str
     email: Optional[str] = None
     password: str
