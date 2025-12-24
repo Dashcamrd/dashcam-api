@@ -64,7 +64,11 @@ def create_user(user_data: dict, db: Session = None):
 def register_user(user: UserCreate):
     """Register a new user with invoice number, device ID, name, email, and password"""
     from models.device_db import DeviceDB
+    import logging
+    
+    logger = logging.getLogger(__name__)
     db: Session = SessionLocal()
+    
     try:
         # Check if invoice number already exists
         existing_user = db.query(UserDB).filter(UserDB.invoice_no == user.invoice_no).first()
@@ -91,24 +95,38 @@ def register_user(user: UserCreate):
         db.refresh(db_user)
         
         # Link device to user if device_id is provided
+        device_created = False
+        device_error = None
+        
         if user.device_id:
-            device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
-            if device:
-                # Device exists - link it to the user
-                device.assigned_user_id = db_user.id
-                db.commit()
-            else:
-                # Device doesn't exist - create it
-                new_device = DeviceDB(
-                    device_id=user.device_id,
-                    name=f"Device {user.device_id}",
-                    assigned_user_id=db_user.id,
-                    org_id="ORG001",  # Default org
-                    status="offline",
-                    created_at=datetime.utcnow()
-                )
-                db.add(new_device)
-                db.commit()
+            try:
+                device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
+                if device:
+                    # Device exists - link it to the user
+                    device.assigned_user_id = db_user.id
+                    db.commit()
+                    device_created = True
+                    logger.info(f"Device {user.device_id} linked to user {db_user.id}")
+                else:
+                    # Device doesn't exist - create it
+                    new_device = DeviceDB(
+                        device_id=user.device_id,
+                        name=f"Device {user.device_id}",
+                        assigned_user_id=db_user.id,
+                        org_id="ORG001",  # Default org
+                        status="offline",
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(new_device)
+                    db.commit()
+                    device_created = True
+                    logger.info(f"Device {user.device_id} created and assigned to user {db_user.id}")
+            except Exception as e:
+                # Log the error but don't fail registration
+                device_error = str(e)
+                logger.error(f"Failed to create/link device {user.device_id}: {e}")
+                # Rollback just the device transaction
+                db.rollback()
         
         # Create access token for immediate login
         token = create_access_token({
@@ -118,7 +136,7 @@ def register_user(user: UserCreate):
             "is_admin": db_user.is_admin
         })
         
-        return {
+        response = {
             "access_token": token, 
             "token_type": "bearer",
             "user": {
@@ -130,6 +148,16 @@ def register_user(user: UserCreate):
                 "is_admin": db_user.is_admin
             }
         }
+        
+        # Add device status to response
+        if user.device_id:
+            response["device_status"] = {
+                "created": device_created,
+                "error": device_error
+            }
+        
+        return response
+        
     finally:
         db.close()
 

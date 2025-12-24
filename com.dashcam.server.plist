@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dashcam.server</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Xcode.app/Contents/Developer/usr/bin/python3</string>
+        <string>/Users/fahadalmanee/pythonProject/start.py</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/fahadalmanee/pythonProject</string>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/dashcam_server.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/dashcam_server_error.log</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+
