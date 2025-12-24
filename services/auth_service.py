@@ -81,6 +81,12 @@ def register_user(user: UserCreate):
             if existing_email:
                 raise HTTPException(status_code=400, detail="Email already exists")
         
+        # Check if device ID is already assigned to another user
+        if user.device_id:
+            existing_device = db.query(DeviceDB).filter(DeviceDB.device_id == user.device_id).first()
+            if existing_device and existing_device.assigned_user_id is not None:
+                raise HTTPException(status_code=400, detail="Device ID is already registered to another user")
+        
         # Create new user
         db_user = UserDB(
             invoice_no=user.invoice_no,
