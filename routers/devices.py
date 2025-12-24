@@ -366,6 +366,49 @@ def add_device_to_user(
     finally:
         db.close()
 
+class RemoveDeviceRequest(BaseModel):
+    device_id: str
+
+@router.post("/remove")
+def remove_device_from_user(
+    request: RemoveDeviceRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Remove a device from the current user's account.
+    The device is unassigned (not deleted from database) so it can be reassigned later.
+    """
+    db = SessionLocal()
+    try:
+        device_id = request.device_id.strip()
+        user_id = current_user["user_id"]
+        
+        # Find the device
+        device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+        
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # Check if device belongs to current user
+        if device.assigned_user_id != user_id:
+            raise HTTPException(status_code=403, detail="You don't have permission to remove this device")
+        
+        # Unassign device from user
+        device.assigned_user_id = None
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Device {device_id} has been removed from your account"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error removing device: {str(e)}")
+    finally:
+        db.close()
+
 @router.put("/rename")
 def rename_device(
     rename_request: DeviceRenameRequest,
