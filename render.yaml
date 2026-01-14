@@ -14,7 +14,7 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: 30
       - key: MANUFACTURER_API_BASE_URL
-        value: https://www.chinamdvr.com:9367
+        value: https://34.166.228.100:9367
       - key: MANUFACTURER_API_USERNAME
         value: your_integrator_username
       - key: MANUFACTURER_API_PASSWORD

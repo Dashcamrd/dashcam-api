@@ -32,7 +32,7 @@ def sync_devices_from_manufacturer():
         
         # Make direct request to manufacturer API
         response = requests.post(
-            "https://www.chinamdvr.com:9367/api/v1/device/getList",
+            "https://34.166.228.100:9367/api/v1/device/getList",
             headers={
                 "Content-Type": "application/json",
                 "X-Token": fresh_token
