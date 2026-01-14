@@ -8,6 +8,10 @@ from models.device_db import DeviceDB
 from models.user_db import UserDB
 from services.manufacturer_api_service import ManufacturerAPIService
 import logging
+import urllib3
+
+# Suppress SSL warnings for self-signed certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,8 @@ def sync_devices_from_manufacturer():
                 "X-Token": fresh_token
             },
             json={"page": 1, "pageSize": 10},
-            timeout=30
+            timeout=30,
+            verify=False  # Self-signed certificate on self-hosted server
         )
         
         logger.info(f"📡 Manufacturer API response status: {response.status_code}")

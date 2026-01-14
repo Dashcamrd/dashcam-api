@@ -7,11 +7,15 @@ import hashlib
 import yaml
 import uuid
 import time
+import urllib3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import logging
 from collections import deque
 from dotenv import load_dotenv
+
+# Suppress SSL warnings for self-signed certificates on self-hosted server
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 load_dotenv()
 
@@ -153,7 +157,8 @@ class ManufacturerAPIService:
             response = requests.post(
                 f"{self.base_url}{endpoint_path}",
                 json=login_data,
-                timeout=timeout
+                timeout=timeout,
+                verify=False  # Self-signed certificate on self-hosted server
             )
             
             logger.info(f"📡 Login response status: {response.status_code}")
@@ -291,9 +296,9 @@ class ManufacturerAPIService:
             
             try:
                 if http_method.upper() == "GET":
-                    response = requests.get(url, params=request_data, headers=headers, timeout=timeout)
+                    response = requests.get(url, params=request_data, headers=headers, timeout=timeout, verify=False)
                 else:
-                    response = requests.post(url, json=request_data, headers=headers, timeout=timeout)
+                    response = requests.post(url, json=request_data, headers=headers, timeout=timeout, verify=False)
             except requests.exceptions.Timeout as e:
                 logger.warning(f"⏱️  [{correlation_id}] Request timeout after {timeout}s")
                 
@@ -347,9 +352,9 @@ class ManufacturerAPIService:
                             # Retry the request with new token
                             headers = self._get_headers()
                             if http_method.upper() == "GET":
-                                response = requests.get(url, params=request_data, headers=headers, timeout=30)
+                                response = requests.get(url, params=request_data, headers=headers, timeout=30, verify=False)
                             else:
-                                response = requests.post(url, json=request_data, headers=headers, timeout=30)
+                                response = requests.post(url, json=request_data, headers=headers, timeout=30, verify=False)
                             if response.status_code == 200:
                                 return response.json()
                     
