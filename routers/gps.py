@@ -14,7 +14,15 @@ import uuid
 from models.dto import LatestGpsDto, TrackPlaybackDto, TrackPointDto, AccStateDto
 from models.device_cache_db import DeviceCacheDB
 from adapters import GPSAdapter, DeviceAdapter
-from database import get_db
+from database import SessionLocal
+
+# Database dependency for FastAPI
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 logger = logging.getLogger(__name__)
 
