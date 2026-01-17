@@ -2,6 +2,7 @@
 GPS Router - Handles GPS tracking, location, and history
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from services.geocoding_service import GeocodingService
@@ -11,7 +12,9 @@ from datetime import datetime
 import logging
 import uuid
 from models.dto import LatestGpsDto, TrackPlaybackDto, TrackPointDto, AccStateDto
+from models.device_cache_db import DeviceCacheDB
 from adapters import GPSAdapter, DeviceAdapter
+from database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -323,10 +326,14 @@ def get_detailed_track_history(
 
 @router.get("/devices")
 def get_user_devices_with_gps_status(
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Get all devices assigned to the current user with their GPS status.
+    
+    OPTIMIZED: Uses cached data from database (populated by forwarding webhooks)
+    instead of calling VMS API for each device. This avoids rate limiting issues.
     """
     user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
     
@@ -337,76 +344,79 @@ def get_user_devices_with_gps_status(
             "message": "No devices assigned to this user"
         }
     
-    # Get latest GPS for each device
+    # Get device IDs for efficient database query
+    device_ids = [device.device_id for device in user_devices]
+    
+    # Fetch ALL cached data in ONE database query (no VMS API calls!)
+    cached_devices = db.query(DeviceCacheDB).filter(
+        DeviceCacheDB.device_id.in_(device_ids)
+    ).all()
+    
+    # Create lookup dict for fast access
+    cache_lookup = {cache.device_id: cache for cache in cached_devices}
+    
+    logger.info(f"📊 Fetched {len(cached_devices)} cached devices from database (no VMS API calls)")
+    
+    # Build response using cached data
     devices_with_gps = []
     for device in user_devices:
-        try:
-            device_data = {"deviceId": device.device_id}
+        cache = cache_lookup.get(device.device_id)
+        
+        if cache:
+            # Use cached data from forwarding webhooks
+            latitude = cache.latitude
+            longitude = cache.longitude
+            acc_status = cache.acc_status or False
+            is_online = cache.is_online or False
+            address = cache.address
             
-            # Use V2 API ONLY - no V1 fallback
-            gps_result = manufacturer_api.get_latest_gps_v2(device_data)
+            # Determine GPS status based on cache data
+            gps_status = "online" if (latitude is not None and longitude is not None) else "offline"
             
-            # Generate correlation ID for tracing
-            correlation_id = str(uuid.uuid4())[:8]
+            # Get location name from cache or geocode if needed
+            if address:
+                location_name = address
+            elif latitude and longitude:
+                location_name = GeocodingService.get_location_name(latitude, longitude)
+            else:
+                location_name = "Location unavailable"
             
-            # Parse GPS data using adapter (V2 only)
-            gps_dto = GPSAdapter.parse_latest_gps_response(gps_result, device.device_id, correlation_id, use_v2_only=True)
-            
-            gps_status = "online" if gps_dto else "offline"
-            
-            # Extract location info from DTO
-            latitude = gps_dto.latitude if gps_dto else None
-            longitude = gps_dto.longitude if gps_dto else None
-            
-            # Use geocoding service to get real location name from coordinates
-            location_name = GeocodingService.get_location_name(latitude, longitude)
-            
-            # Get timestamp for relative time
-            last_online_time = None
-            timestamp_for_relative = None
-            if gps_dto:
-                last_online_time = gps_dto.timestamp_ms
-                timestamp_for_relative = gps_dto.timestamp_ms
-            
-            # Fetch ACC status from device states endpoint (same source as main screen)
-            acc_status = False  # Default to OFF
-            try:
-                states_result = manufacturer_api.get_device_states(device_data)
-                if states_result and 'data' in states_result:
-                    states_dto = DeviceAdapter.parse_device_states_response(states_result, device.device_id, correlation_id)
-                    if states_dto:
-                        acc_status = states_dto.acc_on
-            except Exception as acc_error:
-                logger.warning(f"Failed to fetch ACC status for device {device.device_id}: {acc_error}")
-                # Keep default acc_status = False
+            # Calculate timestamp for relative time
+            last_online_time_ms = None
+            if cache.last_online_time:
+                last_online_time_ms = int(cache.last_online_time.timestamp() * 1000)
+            elif cache.gps_time:
+                last_online_time_ms = int(cache.gps_time.timestamp() * 1000)
+            elif cache.updated_at:
+                last_online_time_ms = int(cache.updated_at.timestamp() * 1000)
             
             devices_with_gps.append({
                 "device_id": device.device_id,
                 "name": device.name,
                 "status": device.status,
                 "gps_status": gps_status,
-                "acc_status": acc_status,  # Use device states endpoint (same as main screen)
+                "acc_status": acc_status,
                 "last_location": {
                     "latitude": latitude,
                     "longitude": longitude,
                     "location_name": location_name,
-                    "timestamp": timestamp_for_relative,
-                    "address": gps_dto.address if gps_dto else None
+                    "timestamp": last_online_time_ms,
+                    "address": address
                 },
-                "last_update": _get_relative_time_from_timestamp(last_online_time // 1000) if last_online_time else "Unknown"
+                "last_update": _get_relative_time_from_timestamp(last_online_time_ms // 1000) if last_online_time_ms else "Unknown"
             })
-        except Exception as e:
-            # If GPS fetch fails for a device, still include it with offline status
+        else:
+            # No cached data - device hasn't sent data via forwarding yet
             devices_with_gps.append({
                 "device_id": device.device_id,
                 "name": device.name,
                 "status": device.status,
                 "gps_status": "offline",
-                "acc_status": False,  # Default to OFF when GPS fetch fails
+                "acc_status": False,
                 "last_location": {
                     "latitude": None,
                     "longitude": None,
-                    "location_name": "Location unavailable",
+                    "location_name": "No data received yet",
                     "timestamp": None,
                     "address": None
                 },
