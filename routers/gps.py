@@ -453,12 +453,22 @@ def get_user_devices_with_gps_status(
             # Use cached data from forwarding webhooks
             latitude = cache.latitude
             longitude = cache.longitude
-            acc_status = cache.acc_status or False
-            is_online = cache.is_online or False
             address = cache.address
             
-            # Determine GPS status based on cache data
-            gps_status = "online" if (latitude is not None and longitude is not None) else "offline"
+            # Check if cache is stale (> 5 minutes = 300 seconds)
+            cache_age_seconds = 999999  # Default to stale
+            if cache.updated_at:
+                cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
+            
+            # Only trust acc_status and is_online if cache is fresh
+            if cache_age_seconds < 300:  # Fresh cache (< 5 minutes)
+                acc_status = cache.acc_status or False
+                is_online = cache.is_online or False
+                gps_status = "online" if (latitude is not None and longitude is not None) else "offline"
+            else:  # Stale cache - don't trust status fields
+                acc_status = False  # Show as OFF when data is old
+                is_online = False
+                gps_status = "offline"  # Mark as offline when data is stale
             
             # Get location name from cache or geocode if needed
             if address:
