@@ -106,11 +106,15 @@ def verify_device_access(device_id: str, current_user: dict) -> bool:
 @router.get("/latest/{device_id}")
 def get_latest_gps(
     device_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Get the latest GPS location for a device.
-    Only devices assigned to the current user are accessible.
+    
+    OPTIMIZED: Uses cached data from database (populated by forwarding webhooks)
+    for near real-time updates (every 1-2 seconds) instead of calling VMS API.
+    Falls back to VMS API only if cache is stale (>5 minutes old).
     """
     # Verify user has access to this device
     if not verify_device_access(device_id, current_user):
@@ -118,7 +122,62 @@ def get_latest_gps(
     
     # Generate correlation ID for this request
     correlation_id = str(uuid.uuid4())[:8]
-    logger.info(f"[{correlation_id}] Getting latest GPS for device {device_id}")
+    
+    # ========================================
+    # OPTIMIZATION: Try cached data FIRST
+    # ========================================
+    cache = db.query(DeviceCacheDB).filter(DeviceCacheDB.device_id == device_id).first()
+    
+    if cache and cache.latitude is not None and cache.longitude is not None:
+        # Check if cache is fresh (less than 5 minutes old)
+        cache_age_seconds = 999999  # Default to stale
+        if cache.updated_at:
+            cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
+        
+        # Use cached data if it's fresh (< 300 seconds = 5 minutes)
+        if cache_age_seconds < 300:
+            logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
+            
+            # Build timestamp_ms from cache
+            timestamp_ms = None
+            if cache.gps_time:
+                timestamp_ms = int(cache.gps_time.timestamp() * 1000)
+            elif cache.last_online_time:
+                timestamp_ms = int(cache.last_online_time.timestamp() * 1000)
+            elif cache.updated_at:
+                timestamp_ms = int(cache.updated_at.timestamp() * 1000)
+            
+            # Get location name
+            location_name = cache.address
+            if not location_name and cache.latitude and cache.longitude:
+                location_name = GeocodingService.get_location_name(cache.latitude, cache.longitude)
+            
+            return {
+                "success": True,
+                "device_id": device_id,
+                "latitude": cache.latitude,
+                "longitude": cache.longitude,
+                "speed": cache.speed,
+                "direction": cache.direction,
+                "altitude": cache.altitude,
+                "acc_on": cache.acc_status or False,
+                "timestamp_ms": timestamp_ms,
+                "lastOnlineTime": timestamp_ms,
+                "last_online_time_ms": timestamp_ms,
+                "last_online_time": timestamp_ms,
+                "address": location_name,
+                "location_name": location_name,
+                "source": "cache"  # Indicate data source for debugging
+            }
+        else:
+            logger.info(f"[{correlation_id}] ⚠️ Cache stale for {device_id} (age: {cache_age_seconds:.0f}s), falling back to VMS API")
+    else:
+        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
+    
+    # ========================================
+    # FALLBACK: Call VMS API if cache is stale/missing
+    # ========================================
+    logger.info(f"[{correlation_id}] 🔄 Calling VMS API for latest GPS (device: {device_id})")
     
     # Use V2 API ONLY - no V1 fallback
     result = manufacturer_api.get_latest_gps_v2({"deviceId": device_id})
@@ -127,6 +186,31 @@ def get_latest_gps(
     if result.get("code") == -1 or result.get("code") not in [200, 0]:
         error_msg = result.get("message", "Unknown error from vendor API")
         logger.warning(f"[{correlation_id}] Vendor API error for latest GPS: {error_msg}")
+        
+        # If API fails but we have stale cache, return stale cache with warning
+        if cache and cache.latitude is not None:
+            logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
+            timestamp_ms = None
+            if cache.gps_time:
+                timestamp_ms = int(cache.gps_time.timestamp() * 1000)
+            elif cache.updated_at:
+                timestamp_ms = int(cache.updated_at.timestamp() * 1000)
+            
+            return {
+                "success": True,
+                "device_id": device_id,
+                "latitude": cache.latitude,
+                "longitude": cache.longitude,
+                "speed": cache.speed,
+                "direction": cache.direction,
+                "timestamp_ms": timestamp_ms,
+                "lastOnlineTime": timestamp_ms,
+                "last_online_time_ms": timestamp_ms,
+                "address": cache.address,
+                "location_name": cache.address or "Location unavailable",
+                "source": "stale_cache",
+                "warning": "Data may be outdated"
+            }
         
         # Check for vendor API infrastructure errors (database, connection issues)
         error_msg_lower = str(error_msg).lower()
@@ -173,12 +257,7 @@ def get_latest_gps(
             response_data["address"] = location_name
             response_data["location_name"] = location_name
         
-        if dto.timestamp_ms is not None:
-            logger.info(f"[{correlation_id}] GPS endpoint returning timestamp_ms: {dto.timestamp_ms}")
-        else:
-            logger.warning(f"[{correlation_id}] GPS endpoint: timestamp_ms is None! Check vendor API response")
-            logger.warning(f"[{correlation_id}] DTO fields: {list(response_data.keys())}")
-            logger.warning(f"[{correlation_id}] Response will include timestamp_ms: None - Flutter should handle this")
+        response_data["source"] = "vms_api"  # Indicate data source for debugging
         
         return {"success": True, **response_data}
     else:
@@ -440,11 +519,15 @@ def get_user_devices_with_gps_status(
 @router.get("/states/{device_id}")
 def get_device_states(
     device_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Get device states including ACC status.
-    Only devices assigned to the current user are accessible.
+    
+    OPTIMIZED: Uses cached data from database (populated by forwarding webhooks)
+    for instant response instead of calling VMS API.
+    Falls back to VMS API only if cache is stale (>5 minutes old).
     """
     # Verify user has access to this device
     if not verify_device_access(device_id, current_user):
@@ -452,7 +535,39 @@ def get_device_states(
     
     # Generate correlation ID for this request
     correlation_id = str(uuid.uuid4())[:8]
-    logger.info(f"[{correlation_id}] Getting device states for device {device_id}")
+    
+    # ========================================
+    # OPTIMIZATION: Try cached data FIRST
+    # ========================================
+    cache = db.query(DeviceCacheDB).filter(DeviceCacheDB.device_id == device_id).first()
+    
+    if cache:
+        # Check if cache is fresh (less than 5 minutes old)
+        cache_age_seconds = 999999  # Default to stale
+        if cache.updated_at:
+            cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
+        
+        # Use cached data if it's fresh (< 300 seconds = 5 minutes)
+        if cache_age_seconds < 300:
+            logger.info(f"[{correlation_id}] ✅ Using CACHED states for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
+            
+            return {
+                "success": True,
+                "device_id": device_id,
+                "acc_on": cache.acc_status or False,
+                "acc_status": cache.acc_status or False,
+                "is_online": cache.is_online or False,
+                "source": "cache"
+            }
+        else:
+            logger.info(f"[{correlation_id}] ⚠️ Cache stale for {device_id} (age: {cache_age_seconds:.0f}s), falling back to VMS API")
+    else:
+        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
+    
+    # ========================================
+    # FALLBACK: Call VMS API if cache is stale/missing
+    # ========================================
+    logger.info(f"[{correlation_id}] 🔄 Calling VMS API for device states (device: {device_id})")
     
     # Build request using adapter
     request_data = DeviceAdapter.build_device_states_request([device_id])
@@ -470,16 +585,23 @@ def get_device_states(
             "device_id": dto.device_id,
             "acc_on": dto.acc_on,
             "acc_status": dto.acc_on,  # Alias for Flutter
+            "source": "vms_api"
         }
-        
-        # NOTE: Device states endpoint does NOT return lastOnlineTime
-        # The vendor API only returns: deviceId, state, accState
-        # Last online time must come from GPS endpoint (/gps/latest/{device_id})
-        # Do not include lastOnlineTime in device states response
-        logger.info(f"[{correlation_id}] Device states endpoint does not provide lastOnlineTime - use GPS endpoint instead")
         
         return response_data
     else:
+        # If API fails but we have stale cache, return stale cache
+        if cache:
+            logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
+            return {
+                "success": True,
+                "device_id": device_id,
+                "acc_on": cache.acc_status or False,
+                "acc_status": cache.acc_status or False,
+                "source": "stale_cache",
+                "warning": "Data may be outdated"
+            }
+        
         raise HTTPException(status_code=500, detail="Failed to fetch device states")
 
 
