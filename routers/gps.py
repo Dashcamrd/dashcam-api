@@ -138,14 +138,8 @@ def get_latest_gps(
         if cache_age_seconds < 300:
             logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
             
-            # Build timestamp_ms from cache
-            timestamp_ms = None
-            if cache.gps_time:
-                timestamp_ms = int(cache.gps_time.timestamp() * 1000)
-            elif cache.last_online_time:
-                timestamp_ms = int(cache.last_online_time.timestamp() * 1000)
-            elif cache.updated_at:
-                timestamp_ms = int(cache.updated_at.timestamp() * 1000)
+            # Always use cache.updated_at for timestamp (most reliable)
+            timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
             
             # Get location name
             location_name = cache.address
@@ -179,15 +173,10 @@ def get_latest_gps(
     # ========================================
     logger.info(f"[{correlation_id}] 🔄 Calling VMS API for latest GPS (device: {device_id})")
     
-    # Store cache timestamp for later use (VMS API might return wrong timestamp for sleeping devices)
+    # Always use cache.updated_at for lastOnlineTime (most reliable source)
     cache_timestamp_ms = None
     if cache and cache.updated_at:
-        if cache.gps_time:
-            cache_timestamp_ms = int(cache.gps_time.timestamp() * 1000)
-        elif cache.last_online_time:
-            cache_timestamp_ms = int(cache.last_online_time.timestamp() * 1000)
-        elif cache.updated_at:
-            cache_timestamp_ms = int(cache.updated_at.timestamp() * 1000)
+        cache_timestamp_ms = int(cache.updated_at.timestamp() * 1000)
     
     # Use V2 API ONLY - no V1 fallback
     result = manufacturer_api.get_latest_gps_v2({"deviceId": device_id})
@@ -200,11 +189,7 @@ def get_latest_gps(
         # If API fails but we have stale cache, return stale cache with warning
         if cache and cache.latitude is not None:
             logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
-            timestamp_ms = None
-            if cache.gps_time:
-                timestamp_ms = int(cache.gps_time.timestamp() * 1000)
-            elif cache.updated_at:
-                timestamp_ms = int(cache.updated_at.timestamp() * 1000)
+            timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
             
             return {
                 "success": True,
@@ -253,24 +238,9 @@ def get_latest_gps(
         # Return with multiple field name formats for Flutter compatibility
         response_data = dto.model_dump(by_alias=False)
         
-        # IMPORTANT: Use cache timestamp if available (VMS might return wrong timestamp for sleeping devices)
-        # VMS API sometimes returns current time instead of device's actual last online time
-        final_timestamp_ms = dto.timestamp_ms
-        if cache_timestamp_ms is not None:
-            # Check if VMS timestamp seems "too fresh" (within 2 minutes of now)
-            # If so, prefer the cache timestamp which reflects actual device activity
-            now_ms = int(datetime.now().timestamp() * 1000)
-            if dto.timestamp_ms is not None:
-                vms_age_seconds = (now_ms - dto.timestamp_ms) / 1000
-                cache_age_seconds = (now_ms - cache_timestamp_ms) / 1000
-                
-                # If VMS says "just now" (<2min) but cache says older, use cache
-                if vms_age_seconds < 120 and cache_age_seconds > 120:
-                    logger.info(f"[{correlation_id}] VMS timestamp too fresh ({vms_age_seconds:.0f}s), using cache timestamp ({cache_age_seconds:.0f}s)")
-                    final_timestamp_ms = cache_timestamp_ms
-            else:
-                # VMS returned no timestamp, use cache
-                final_timestamp_ms = cache_timestamp_ms
+        # ALWAYS use cache.updated_at for lastOnlineTime (most reliable source)
+        # VMS API sometimes returns wrong timestamp for sleeping devices
+        final_timestamp_ms = cache_timestamp_ms if cache_timestamp_ms is not None else dto.timestamp_ms
         
         # Always include timestamp fields (even if None) so Flutter knows what to look for
         response_data["timestamp_ms"] = final_timestamp_ms
