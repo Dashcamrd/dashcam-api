@@ -24,6 +24,7 @@ import os
 from database import SessionLocal
 from models.device_cache_db import DeviceCacheDB, AlarmDB
 from services.geocoding_service import GeocodingService
+from services.notification_service import NotificationService
 
 router = APIRouter(prefix="/api/forwarding", tags=["Data Forwarding"])
 logger = logging.getLogger(__name__)
@@ -42,25 +43,178 @@ def get_db():
         db.close()
 
 
-# Alarm type mapping (vendor codes to human-readable names)
-ALARM_TYPE_NAMES = {
-    1: "SOS Emergency",
-    2: "Speed Limit Exceeded",
-    3: "Fatigue Driving",
-    4: "Sharp Turn",
-    5: "Sharp Acceleration",
-    6: "Sharp Deceleration",
-    7: "Collision Warning",
-    8: "Lane Departure",
-    9: "Geofence Entry",
-    10: "Geofence Exit",
-    11: "Low Battery",
-    12: "Device Offline",
-    13: "ACC ON",
-    14: "ACC OFF",
-    15: "Vibration Alarm",
-    16: "Tampering Alarm",
+# =============================================================================
+# ALARM TYPE MAPPINGS - Based on Vendor Documentation (6-digit typeId format)
+# Format: AABBCC where AA=primary, BB=secondary, CC=tertiary category
+# =============================================================================
+
+# Alarm Category Mapping (alarm.type field → category prefix)
+ALARM_CATEGORY_MAP = {
+    1: {"prefix": 64, "name": "ADAS", "field": "adas"},   # Advanced Driver Assistance
+    2: {"prefix": 65, "name": "DSM", "field": "dsm"},     # Driver Status Monitoring
+    3: {"prefix": 66, "name": "BSD", "field": "bsd"},     # Blind Spot Detection
+    4: {"prefix": 70, "name": "SDA", "field": "sda"},     # Severe Driving Alarms
 }
+
+# Complete Alarm Type Names (vendor 6-digit typeId → human-readable name)
+ALARM_TYPE_NAMES = {
+    # ADAS - Advanced Driver Assistance System (64xxxx)
+    640001: "Forward Collision Warning",
+    640002: "Lane Departure Warning",
+    640003: "Following Distance Warning",
+    640004: "Pedestrian Collision Warning",
+    640005: "Frequent Lane Change Warning",
+    640006: "Road Sign Recognition",
+    640101: "Road Sign Recognition",
+    
+    # DSM - Driver Status Monitoring (65xxxx)
+    650001: "Fatigue Driving Warning",
+    650002: "Phone Call Warning",
+    650003: "Smoking Warning",
+    650004: "Distracted Driving Warning",
+    650005: "Driver Abnormal Warning",
+    650006: "Driver Change Warning",
+    650007: "Infrared Blocking Warning",
+    650008: "Sunglasses Warning",
+    650009: "Yawning Warning",
+    650010: "Camera Covered Warning",
+    650011: "Seatbelt Warning",
+    650012: "Driver Not Detected",
+    
+    # BSD - Blind Spot Detection (66xxxx)
+    660001: "Rear Approach Warning",
+    660002: "Left Rear Approach Warning",
+    660003: "Right Rear Approach Warning",
+    
+    # SDA - Severe Driving Alarms (70xxxx)
+    700001: "Rapid Acceleration Warning",
+    700002: "Rapid Deceleration Warning",
+    700003: "Sharp Turn Warning",
+    700004: "Idling Warning",
+    700005: "Abnormal Shutdown Warning",
+    700006: "Neutral Sliding Warning",
+    700007: "Engine Over-rev Warning",
+    
+    # Common Alarms (11xxxx)
+    110100: "Emergency SOS",
+    110101: "Speeding Alarm",
+    110102: "Fatigue Driving Alarm",
+    110103: "Danger Warning",
+    110104: "GNSS Module Fault",
+    110105: "GNSS Antenna Cut",
+    110106: "GNSS Antenna Short Circuit",
+    110107: "Main Power Undervoltage",
+    110108: "Main Power Failure",
+    110201: "Illegal Ignition",
+    110202: "Illegal Movement",
+    110203: "Collision Warning",
+    110204: "Rollover Warning",
+    110205: "Fuel Abnormal",
+    110206: "Vehicle Stolen",
+    110301: "Overtime Driving (Day)",
+    110302: "Rest Time Insufficient",
+    110303: "Route Deviation",
+    110304: "VSS Fault",
+    110305: "Oil Cut Circuit",
+    
+    # Channel Alarms (12xxxx)
+    120101: "Video Loss Alarm",
+    120102: "Video Signal Blocking",
+    120103: "Storage Fault",
+    120104: "Other Video Equipment Fault",
+    120105: "Bus Overload",
+    
+    # Geofence Alarms (13xxxx)
+    130101: "Enter Geofence",
+    130102: "Exit Geofence",
+    130103: "Route Entry",
+    130104: "Route Exit",
+    130105: "Route Driving Time Abnormal",
+}
+
+# Alarm severity levels by typeId prefix
+CRITICAL_ALARM_PREFIXES = [110100, 110107, 110108, 110201, 110202, 110203, 110204, 110206]  # Emergency, Power, Collision, Theft
+WARNING_ALARM_PREFIXES = [64, 65, 66, 70]  # ADAS, DSM, BSD, SDA categories
+
+def get_alarm_type_id(alarm_item: dict) -> int:
+    """
+    Extract the full 6-digit alarm typeId from vendor alarm data.
+    
+    Vendor sends alarms with:
+    - alarm.type: Category number (1=ADAS, 2=DSM, 3=BSD, 4=SDA)
+    - alarm.{adas|dsm|bsd|sda}.alarmEventType: Specific alarm within category
+    
+    Returns the 6-digit typeId (e.g., 700003 for Sharp Turn Warning)
+    """
+    category_type = alarm_item.get("type")
+    
+    # Check if it's a categorized alarm (ADAS, DSM, BSD, SDA)
+    if category_type in ALARM_CATEGORY_MAP:
+        category = ALARM_CATEGORY_MAP[category_type]
+        prefix = category["prefix"]
+        field_name = category["field"]
+        
+        # Get the nested alarm details
+        alarm_details = alarm_item.get(field_name, {})
+        event_type = alarm_details.get("alarmEventType", 1)
+        
+        # Construct the 6-digit typeId: prefix * 10000 + event_type
+        type_id = prefix * 10000 + event_type
+        return type_id
+    
+    # For non-categorized alarms, check if typeId is directly provided
+    if "typeId" in alarm_item:
+        return alarm_item["typeId"]
+    
+    # Fallback: return the raw type if it looks like a 6-digit code
+    if category_type and category_type > 100000:
+        return category_type
+    
+    # Unknown format - return raw type with placeholder prefix
+    return 999900 + (category_type or 0)
+
+def get_alarm_name(type_id: int) -> str:
+    """Get human-readable alarm name from typeId."""
+    if type_id in ALARM_TYPE_NAMES:
+        return ALARM_TYPE_NAMES[type_id]
+    
+    # Try to determine category from prefix
+    prefix = type_id // 10000
+    category_names = {64: "ADAS", 65: "DSM", 66: "BSD", 70: "SDA", 11: "Common", 12: "Channel", 13: "Geofence"}
+    category = category_names.get(prefix, "Unknown")
+    
+    return f"{category} Alarm ({type_id})"
+
+def get_alarm_level(type_id: int) -> int:
+    """
+    Determine alarm severity level.
+    Returns: 3=Critical, 2=Warning, 1=Info
+    """
+    # Critical alarms
+    if type_id in CRITICAL_ALARM_PREFIXES:
+        return 3
+    
+    # Warning alarms (ADAS, DSM, BSD, SDA, Speeding)
+    prefix = type_id // 10000
+    if prefix in WARNING_ALARM_PREFIXES or type_id == 110101:
+        return 2
+    
+    # Default: Info level
+    return 1
+
+def get_alarm_category(type_id: int) -> str:
+    """Get alarm category name from typeId."""
+    prefix = type_id // 10000
+    categories = {
+        64: "ADAS",
+        65: "DSM", 
+        66: "BSD",
+        70: "SDA",
+        11: "Common",
+        12: "Channel",
+        13: "Geofence",
+    }
+    return categories.get(prefix, "Unknown")
 
 
 @router.post("/receive")
@@ -221,7 +375,11 @@ async def handle_gps_data(db: Session, data: dict):
             DeviceCacheDB.device_id == device_id
         ).first()
         
+        # Track previous ACC status for notification
+        previous_acc_status = None
+        
         if existing:
+            previous_acc_status = existing.acc_status
             existing.latitude = lat
             existing.longitude = lng
             existing.speed = speed
@@ -248,6 +406,19 @@ async def handle_gps_data(db: Session, data: dict):
                 last_online_time=datetime.utcnow()
             )
             db.add(new_cache)
+        
+        # Send push notification if ACC status changed
+        if previous_acc_status is not None and previous_acc_status != acc_status:
+            try:
+                NotificationService.send_acc_notification(
+                    db=db,
+                    device_id=device_id,
+                    acc_on=acc_status,
+                    previous_acc_status=previous_acc_status
+                )
+                logger.info(f"📱 ACC change notification sent for {device_id}: {previous_acc_status} → {acc_status}")
+            except Exception as e:
+                logger.error(f"❌ Failed to send ACC notification: {e}")
         
         processed_count += 1
         logger.info(f"✅ Stored GPS for device {device_id}: lat={lat}, lng={lng}, acc={acc_status}")
@@ -281,7 +452,11 @@ async def handle_device_status(db: Session, data: dict):
         DeviceCacheDB.device_id == device_id
     ).first()
     
+    # Track previous ACC status for notification
+    previous_acc_status = None
+    
     if existing:
+        previous_acc_status = existing.acc_status
         if acc_status is not None:
             existing.acc_status = acc_status
         if online_status is not None:
@@ -299,6 +474,20 @@ async def handle_device_status(db: Session, data: dict):
         db.add(new_cache)
     
     db.commit()
+    
+    # Send push notification if ACC status changed
+    if acc_status is not None and previous_acc_status is not None and previous_acc_status != acc_status:
+        try:
+            NotificationService.send_acc_notification(
+                db=db,
+                device_id=device_id,
+                acc_on=acc_status,
+                previous_acc_status=previous_acc_status
+            )
+            logger.info(f"📱 ACC change notification sent for {device_id}: {previous_acc_status} → {acc_status}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send ACC notification: {e}")
+    
     logger.info(f"✅ Updated status for {device_id}: ACC={acc_status}, Online={online_status}")
 
 
@@ -381,48 +570,62 @@ async def handle_alarm_data(db: Session, data: dict):
         db.add(new_cache)
     
     # Process each alarm type in the list
-    # Determine alarm levels
-    critical_alarms = [1, 7, 11, 12, 15, 16]  # SOS, Collision, Low Battery, Offline, Vibration, Tamper
-    warning_alarms = [2, 3, 4, 5, 6, 8]  # Speed, Fatigue, Turns, Lane Departure
-    
     processed_count = 0
     
     for alarm_item in alarm_list:
-        alarm_type = alarm_item.get("type")
+        raw_type = alarm_item.get("type")
         alarm_status = alarm_item.get("Status", 0)  # 0 = inactive, 1 = active
-        alarm_type_name = ALARM_TYPE_NAMES.get(alarm_type, f"Type {alarm_type}")
+        
+        # Extract full 6-digit typeId using new parsing logic
+        type_id = get_alarm_type_id(alarm_item)
+        alarm_type_name = get_alarm_name(type_id)
+        alarm_category = get_alarm_category(type_id)
+        alarm_level = get_alarm_level(type_id)
+        
+        # Extract attachment count if available (from nested sda/adas/dsm/bsd object)
+        attachment_count = 0
+        for field in ["sda", "adas", "dsm", "bsd"]:
+            if field in alarm_item:
+                alarm_identifier = alarm_item[field].get("alarmIdentifier", {})
+                attachment_count = alarm_identifier.get("attachmentCount", 0)
+                break
         
         # Log ALL alarms received (for visibility)
-        logger.info(f"📋 Alarm received: {alarm_type_name} (type={alarm_type}, status={alarm_status}) - {'ACTIVE ✓' if alarm_status == 1 else 'inactive, skipping'}")
+        logger.info(
+            f"📋 Alarm received: {alarm_type_name} "
+            f"(typeId={type_id}, category={alarm_category}, rawType={raw_type}, status={alarm_status}, attachments={attachment_count}) - "
+            f"{'ACTIVE ✓' if alarm_status == 1 else 'inactive, skipping'}"
+        )
         
         # Only store ACTIVE alarms (Status=1) to save database space
         # Status=0 means "alarm cleared/inactive" - no need to store
         if alarm_status != 1:
             continue  # Skip inactive alarms
         
-        if alarm_type in critical_alarms:
-            alarm_level = 3
-        elif alarm_type in warning_alarms:
-            alarm_level = 2
-        else:
-            alarm_level = 1
-        
-        # Create alarm record
+        # Create alarm record with full vendor typeId
         new_alarm = AlarmDB(
             device_id=device_id,
-            alarm_type=alarm_type,
+            alarm_type=type_id,  # Now stores 6-digit vendor typeId
             alarm_type_name=alarm_type_name,
             alarm_level=alarm_level,
             latitude=lat,
             longitude=lng,
             speed=speed,
             alarm_time=alarm_time,
-            alarm_data=json.dumps({"base": base_info, "alarm": alarm_item})
+            alarm_data=json.dumps({
+                "base": base_info, 
+                "alarm": alarm_item,
+                "parsed": {
+                    "typeId": type_id,
+                    "category": alarm_category,
+                    "attachmentCount": attachment_count
+                }
+            })
         )
         db.add(new_alarm)
         processed_count += 1
         
-        logger.info(f"🚨 Alarm for {device_id}: {alarm_type_name} (type={alarm_type}, status={alarm_status})")
+        logger.info(f"🚨 Alarm for {device_id}: {alarm_type_name} (typeId={type_id}, category={alarm_category})")
     
     db.commit()
     logger.info(f"✅ Processed {processed_count} alarms for device {device_id}")

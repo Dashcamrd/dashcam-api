@@ -8,11 +8,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding
+from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding, notifications
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
 from models.device_cache_db import DeviceCacheDB, AlarmDB  # New cache models
+from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB  # Push notification models
 
 # Create all tables (with error handling for connection issues)
 try:
@@ -57,6 +58,7 @@ app.include_router(reports.router)
 app.include_router(admin.router)
 app.include_router(database_info.router)
 app.include_router(forwarding.router)  # Data forwarding from vendor (webhooks)
+app.include_router(notifications.router)  # Push notifications management
 
 @app.get("/")
 def root():
