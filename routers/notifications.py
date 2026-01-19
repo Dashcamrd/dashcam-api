@@ -15,7 +15,7 @@ import logging
 from database import SessionLocal
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB, NotificationPreference
 from models.device_db import DeviceDB
-from routers.auth import get_current_user
+from services.auth_service import get_current_user
 
 router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
 logger = logging.getLogger(__name__)
