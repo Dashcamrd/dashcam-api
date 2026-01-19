@@ -122,24 +122,24 @@ def register_user(user: UserCreate):
             device_result = {"device_id": device_id, "created": False, "error": None}
             try:
                 device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
-            if device:
+                if device:
                     # Device exists but unassigned - link it to the user
-                device.assigned_user_id = db_user.id
-                db.commit()
+                    device.assigned_user_id = db_user.id
+                    db.commit()
                     device_result["created"] = True
                     logger.info(f"Device {device_id} linked to user {db_user.id}")
-            else:
-                # Device doesn't exist - create it
-                new_device = DeviceDB(
+                else:
+                    # Device doesn't exist - create it
+                    new_device = DeviceDB(
                         device_id=device_id,
                         name=f"Device {device_id}",
-                    assigned_user_id=db_user.id,
-                    org_id="ORG001",  # Default org
-                    status="offline",
-                    created_at=datetime.utcnow()
-                )
-                db.add(new_device)
-                db.commit()
+                        assigned_user_id=db_user.id,
+                        org_id="ORG001",  # Default org
+                        status="offline",
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(new_device)
+                    db.commit()
                     device_result["created"] = True
                     logger.info(f"Device {device_id} created and assigned to user {db_user.id}")
             except Exception as e:
