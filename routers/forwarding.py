@@ -57,45 +57,89 @@ ALARM_CATEGORY_MAP = {
 }
 
 # Complete Alarm Type Names (vendor 6-digit typeId → human-readable name)
+# Updated from official vendor documentation (Jan 2026)
 ALARM_TYPE_NAMES = {
-    # ADAS - Advanced Driver Assistance System (64xxxx)
+    # ==========================================================================
+    # ADAS - Advanced Driver Assistance System (type=1, prefix 64xxxx)
+    # ==========================================================================
+    640000: "ADAS Unknown Event",
     640001: "Forward Collision Warning",
     640002: "Lane Departure Warning",
-    640003: "Following Distance Warning",
+    640003: "Following Too Close Warning",
     640004: "Pedestrian Collision Warning",
     640005: "Frequent Lane Change Warning",
-    640006: "Road Sign Recognition",
-    640101: "Road Sign Recognition",
+    640006: "Road Sign Limit Warning",
+    640007: "Obstacle Warning",
+    640008: "Driving Assistance Failure",
+    640009: "Collision Rollover Warning",
+    640016: "Road Sign Recognition Event",  # 0x10
+    640017: "Active Capture Event",          # 0x11
     
-    # DSM - Driver Status Monitoring (65xxxx)
+    # ==========================================================================
+    # DSM - Driver Status Monitoring (type=2, prefix 65xxxx)
+    # ==========================================================================
+    650000: "DSM Unknown Event",
     650001: "Fatigue Driving Warning",
     650002: "Phone Call Warning",
     650003: "Smoking Warning",
     650004: "Distracted Driving Warning",
-    650005: "Driver Abnormal Warning",
-    650006: "Driver Change Warning",
+    650005: "Abnormal Driver Warning",
+    650006: "User Defined Alarm Start",
     650007: "Infrared Blocking Warning",
     650008: "Sunglasses Warning",
     650009: "Yawning Warning",
     650010: "Camera Covered Warning",
     650011: "Seatbelt Warning",
     650012: "Driver Not Detected",
+    650016: "Auto Capture Event",            # 0x10
+    650017: "Driver Change Event",           # 0x11
+    650018: "Hands Off Wheel Warning",       # 0x12
+    650019: "Using Phone Warning",           # 0x13
+    650032: "Eyes Closed Warning",           # 0x20
+    650248: "Eating Warning",                # 0xF8
+    650251: "No Mask Warning",               # 0xFB
+    650252: "Drinking Warning",              # 0xFC
+    650254: "Eye Close Alarm",               # 0xFE (legacy)
+    650250: "Safety Belt Warning",           # 0xFA (legacy)
     
-    # BSD - Blind Spot Detection (66xxxx)
+    # ==========================================================================
+    # BSD - Blind Spot Detection (type=3, prefix 66xxxx)
+    # ==========================================================================
+    660000: "BSD Unknown Event",
     660001: "Rear Approach Warning",
     660002: "Left Rear Approach Warning",
     660003: "Right Rear Approach Warning",
     
-    # SDA - Severe Driving Alarms (70xxxx)
-    700001: "Rapid Acceleration Warning",
-    700002: "Rapid Deceleration Warning",
-    700003: "Sharp Turn Warning",
+    # ==========================================================================
+    # SDA - Sudden/Severe Driving Alarms (type=4, prefix 70xxxx)
+    # ==========================================================================
+    700000: "SDA Unknown Event",
+    700001: "Harsh Acceleration Warning",
+    700002: "Harsh Braking Warning",
+    700003: "Harsh Turning Warning",         # "Sharp Turn Warning"
     700004: "Idling Warning",
-    700005: "Abnormal Shutdown Warning",
-    700006: "Neutral Sliding Warning",
-    700007: "Engine Over-rev Warning",
+    700005: "Abnormal Engine Stall Warning",
+    700006: "Coasting in Neutral Warning",
+    700007: "Engine Overspeed Warning",
     
-    # Common Alarms (11xxxx)
+    # ==========================================================================
+    # Geofence Alarms (type=5,6,7, prefix 68xxxx)
+    # ==========================================================================
+    680001: "Geofence Overspeed Warning",
+    680002: "Geofence Entry",
+    680003: "Geofence Exit",
+    680004: "Route Driving Time Warning",
+    
+    # ==========================================================================
+    # Sensor Alarms (type=10,11,12, prefix 69xxxx)
+    # ==========================================================================
+    690001: "Temperature Sensor Alarm",
+    690002: "Tire Pressure Alarm",
+    690003: "Oil Level Alarm",
+    
+    # ==========================================================================
+    # Common Alarms (11xxxx) - General vehicle alarms
+    # ==========================================================================
     110100: "Emergency SOS",
     110101: "Speeding Alarm",
     110102: "Fatigue Driving Alarm",
@@ -117,14 +161,18 @@ ALARM_TYPE_NAMES = {
     110304: "VSS Fault",
     110305: "Oil Cut Circuit",
     
-    # Channel Alarms (12xxxx)
+    # ==========================================================================
+    # Channel Alarms (12xxxx) - Video/Camera related
+    # ==========================================================================
     120101: "Video Loss Alarm",
     120102: "Video Signal Blocking",
     120103: "Storage Fault",
     120104: "Other Video Equipment Fault",
     120105: "Bus Overload",
     
-    # Geofence Alarms (13xxxx)
+    # ==========================================================================
+    # Geofence Alarms (13xxxx) - Legacy format
+    # ==========================================================================
     130101: "Enter Geofence",
     130102: "Exit Geofence",
     130103: "Route Entry",
