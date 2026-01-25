@@ -111,8 +111,11 @@ class ChinaMDVRService:
             
             # Send command via text delivery API
             send_data = {
-                "deviceIds": [device_id],
-                "content": command
+                "name": f"Activate_{device_id}",
+                "content": command,
+                "contentTypes": ["1", "2"],
+                "deviceId": device_id,
+                "operator": "admin"
             }
             
             response = self.session.post(
