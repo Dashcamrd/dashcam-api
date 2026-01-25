@@ -4,11 +4,15 @@ Devices Router - Handles device management and configuration
 from fastapi import APIRouter, Depends, HTTPException
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
+from services.chinamdvr_service import chinamdvr_service
 from typing import Optional, List
 from pydantic import BaseModel
 from database import SessionLocal
 from models.device_db import DeviceDB
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -450,5 +454,48 @@ def rename_device(
         raise HTTPException(status_code=500, detail=f"Error renaming device: {str(e)}")
     finally:
         db.close()
+
+
+@router.post("/{device_id}/activate")
+def activate_device(
+    device_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Activate a device by redirecting it from the manufacturer server (chinamdvr.com)
+    to our own VMS server (vms.dashcamrd.com).
+    
+    This sends a server redirect command ($JTSVR1) to the device through
+    the manufacturer's API. The device will then reconnect to our server.
+    
+    Use this when:
+    - A new device is powered on for the first time (defaults to chinamdvr.com)
+    - A device needs to be reconfigured to point to our server
+    """
+    # Verify user has access to this device
+    user_devices = get_user_devices(current_user["user_id"], is_admin=current_user.get("is_admin", False))
+    user_device_ids = [device.device_id for device in user_devices]
+    
+    if device_id not in user_device_ids:
+        raise HTTPException(status_code=403, detail="Device not accessible")
+    
+    logger.info(f"🚀 User {current_user['user_id']} activating device {device_id}")
+    
+    # Send activation command through ChinaMDVR service
+    result = chinamdvr_service.activate_device(device_id)
+    
+    if result.get("success"):
+        return {
+            "success": True,
+            "message": result.get("message"),
+            "device_id": device_id,
+            "command_sent": result.get("command"),
+            "target_server": "vms.dashcamrd.com:9339"
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message", "Failed to activate device")
+        )
 
 
