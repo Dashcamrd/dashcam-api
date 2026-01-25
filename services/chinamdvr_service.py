@@ -100,7 +100,7 @@ class ChinaMDVRService:
             if not self._ensure_authenticated():
                 return {
                     "success": False,
-                    "message": "Failed to authenticate with manufacturer server"
+                    "message": "Device is not Online"
                 }
             
             # Build the server redirect commands for both JTSVR1 and JTSVR4
@@ -133,7 +133,7 @@ class ChinaMDVRService:
                 logger.error(f"❌ Failed to send JTSVR1 command: {error_msg}")
                 return {
                     "success": False,
-                    "message": f"Failed to send JTSVR1 command: {error_msg}",
+                    "message": "Device is not Online",
                     "device_id": device_id
                 }
             
@@ -171,8 +171,8 @@ class ChinaMDVRService:
                 error_msg = result4.get("msg") or result4.get("message") or "Unknown error"
                 logger.error(f"❌ Failed to send JTSVR4 command: {error_msg}")
                 return {
-                    "success": False,
-                    "message": f"JTSVR1 sent but JTSVR4 failed: {error_msg}",
+                    "success": True,  # Partial success - JTSVR1 was sent
+                    "message": "Activation Request Succeeded Partially",
                     "device_id": device_id
                 }
                 
@@ -180,7 +180,7 @@ class ChinaMDVRService:
             logger.error(f"❌ Activation error for {device_id}: {e}")
             return {
                 "success": False,
-                "message": f"Activation error: {str(e)}",
+                "message": "Device is not Online",
                 "device_id": device_id
             }
     
