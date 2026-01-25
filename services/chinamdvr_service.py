@@ -103,44 +103,76 @@ class ChinaMDVRService:
                     "message": "Failed to authenticate with manufacturer server"
                 }
             
-            # Build the server redirect command
-            # Format: $JTSVR1,server_address,port,enable,enable
-            command = f"$JTSVR1,{self.OUR_SERVER},{self.OUR_PORT},1,1"
+            # Build the server redirect commands for both JTSVR1 and JTSVR4
+            # Format: $JTSVRx,server_address,port,enable,enable
+            command1 = f"$JTSVR1,{self.OUR_SERVER},{self.OUR_PORT},1,1"
+            command4 = f"$JTSVR4,{self.OUR_SERVER},{self.OUR_PORT},1,1"
             
-            logger.info(f"📤 Sending command to device {device_id}: {command}")
+            # Send JTSVR1 command
+            logger.info(f"📤 Sending JTSVR1 command to device {device_id}: {command1}")
             
-            # Send command via text delivery API
-            send_data = {
-                "name": f"Activate_{device_id}",
-                "content": command,
+            send_data1 = {
+                "name": f"Activate_SVR1_{device_id}",
+                "content": command1,
                 "contentTypes": ["1", "2"],
                 "deviceId": device_id,
                 "operator": "admin"
             }
             
-            response = self.session.post(
+            response1 = self.session.post(
                 f"{self.BASE_URL}/api/v1/textDelivery/send",
-                json=send_data,
+                json=send_data1,
                 headers={"X-Token": self.token},
                 timeout=30
             )
             
-            result = response.json()
+            result1 = response1.json()
             
-            if result.get("code") == 200 or result.get("code") == 0:
-                logger.info(f"✅ Activation command sent to device {device_id}")
+            if result1.get("code") != 200 and result1.get("code") != 0:
+                error_msg = result1.get("msg") or result1.get("message") or "Unknown error"
+                logger.error(f"❌ Failed to send JTSVR1 command: {error_msg}")
+                return {
+                    "success": False,
+                    "message": f"Failed to send JTSVR1 command: {error_msg}",
+                    "device_id": device_id
+                }
+            
+            logger.info(f"✅ JTSVR1 command sent to device {device_id}")
+            
+            # Send JTSVR4 command
+            logger.info(f"📤 Sending JTSVR4 command to device {device_id}: {command4}")
+            
+            send_data4 = {
+                "name": f"Activate_SVR4_{device_id}",
+                "content": command4,
+                "contentTypes": ["1", "2"],
+                "deviceId": device_id,
+                "operator": "admin"
+            }
+            
+            response4 = self.session.post(
+                f"{self.BASE_URL}/api/v1/textDelivery/send",
+                json=send_data4,
+                headers={"X-Token": self.token},
+                timeout=30
+            )
+            
+            result4 = response4.json()
+            
+            if result4.get("code") == 200 or result4.get("code") == 0:
+                logger.info(f"✅ JTSVR4 command sent to device {device_id}")
                 return {
                     "success": True,
-                    "message": f"Activation command sent to device {device_id}. Device will reconnect to {self.OUR_SERVER} shortly.",
-                    "command": command,
+                    "message": f"Activation commands sent to device {device_id}. Device will reconnect to {self.OUR_SERVER} shortly.",
+                    "commands": [command1, command4],
                     "device_id": device_id
                 }
             else:
-                error_msg = result.get("msg") or result.get("message") or "Unknown error"
-                logger.error(f"❌ Failed to send command: {error_msg}")
+                error_msg = result4.get("msg") or result4.get("message") or "Unknown error"
+                logger.error(f"❌ Failed to send JTSVR4 command: {error_msg}")
                 return {
                     "success": False,
-                    "message": f"Failed to send command: {error_msg}",
+                    "message": f"JTSVR1 sent but JTSVR4 failed: {error_msg}",
                     "device_id": device_id
                 }
                 
