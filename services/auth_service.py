@@ -64,9 +64,57 @@ def create_user(user_data: dict, db: Session = None):
 def register_user(user: UserCreate):
     """Register a new user with invoice number, device ID(s), name, email, and password"""
     from models.device_db import DeviceDB
+    from models.device_cache_db import DeviceCacheDB
+    from adapters import GPSAdapter
+    from services.manufacturer_api_service import manufacturer_api
     import logging
     
     logger = logging.getLogger(__name__)
+    
+    def _populate_device_cache_for_registration(device_id: str, db_session):
+        """Fetch device data from VMS and populate cache after registration"""
+        try:
+            logger.info(f"📡 Fetching initial data for device {device_id} from VMS...")
+            gps_result = manufacturer_api.get_device_gps([device_id])
+            
+            if gps_result.get("code") == 0:
+                gps_data_list = gps_result.get("data", [])
+                if gps_data_list:
+                    parsed_data = GPSAdapter.parse_gps_response(gps_data_list, device_id)
+                    
+                    if parsed_data and parsed_data.get("latitude") and parsed_data.get("longitude"):
+                        cache = db_session.query(DeviceCacheDB).filter(
+                            DeviceCacheDB.device_id == device_id
+                        ).first()
+                        
+                        if cache:
+                            cache.latitude = parsed_data.get("latitude")
+                            cache.longitude = parsed_data.get("longitude")
+                            cache.speed = parsed_data.get("speed", 0)
+                            cache.direction = parsed_data.get("direction", 0)
+                            cache.address = parsed_data.get("address")
+                            cache.acc_state = parsed_data.get("acc_state")
+                            cache.updated_at = datetime.utcnow()
+                        else:
+                            new_cache = DeviceCacheDB(
+                                device_id=device_id,
+                                latitude=parsed_data.get("latitude"),
+                                longitude=parsed_data.get("longitude"),
+                                speed=parsed_data.get("speed", 0),
+                                direction=parsed_data.get("direction", 0),
+                                address=parsed_data.get("address"),
+                                acc_state=parsed_data.get("acc_state"),
+                                updated_at=datetime.utcnow()
+                            )
+                            db_session.add(new_cache)
+                        
+                        db_session.commit()
+                        logger.info(f"✅ Populated cache for device {device_id}")
+                        return True
+            return False
+        except Exception as e:
+            logger.warning(f"⚠️ Could not fetch data for device {device_id}: {e}")
+            return False
     db: Session = SessionLocal()
     
     try:
@@ -142,6 +190,10 @@ def register_user(user: UserCreate):
                     db.commit()
                     device_result["created"] = True
                     logger.info(f"Device {device_id} created and assigned to user {db_user.id}")
+                
+                # Try to populate cache with VMS data (non-blocking)
+                _populate_device_cache_for_registration(device_id, db)
+                
             except Exception as e:
                 # Log the error but don't fail registration
                 device_result["error"] = str(e)

@@ -9,12 +9,87 @@ from typing import Optional, List
 from pydantic import BaseModel
 from database import SessionLocal
 from models.device_db import DeviceDB
+from models.device_cache_db import DeviceCacheDB
+from adapters import GPSAdapter
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
+
+
+def _populate_device_cache(device_id: str, db_session=None):
+    """
+    Fetch device data from VMS and populate the device_cache table.
+    This is called after adding a device to ensure immediate data availability.
+    """
+    close_db = False
+    if db_session is None:
+        db_session = SessionLocal()
+        close_db = True
+    
+    try:
+        logger.info(f"📡 Fetching initial data for device {device_id} from VMS...")
+        
+        # Fetch GPS data from VMS
+        gps_result = manufacturer_api.get_device_gps([device_id])
+        
+        if gps_result.get("code") == 0:
+            gps_data_list = gps_result.get("data", [])
+            
+            if gps_data_list:
+                # Parse GPS data using adapter
+                parsed_data = GPSAdapter.parse_gps_response(gps_data_list, device_id)
+                
+                if parsed_data and parsed_data.get("latitude") and parsed_data.get("longitude"):
+                    # Check if cache entry exists
+                    cache = db_session.query(DeviceCacheDB).filter(
+                        DeviceCacheDB.device_id == device_id
+                    ).first()
+                    
+                    if cache:
+                        # Update existing cache
+                        cache.latitude = parsed_data.get("latitude")
+                        cache.longitude = parsed_data.get("longitude")
+                        cache.speed = parsed_data.get("speed", 0)
+                        cache.direction = parsed_data.get("direction", 0)
+                        cache.address = parsed_data.get("address")
+                        cache.acc_state = parsed_data.get("acc_state")
+                        cache.updated_at = datetime.utcnow()
+                        logger.info(f"✅ Updated cache for device {device_id}")
+                    else:
+                        # Create new cache entry
+                        new_cache = DeviceCacheDB(
+                            device_id=device_id,
+                            latitude=parsed_data.get("latitude"),
+                            longitude=parsed_data.get("longitude"),
+                            speed=parsed_data.get("speed", 0),
+                            direction=parsed_data.get("direction", 0),
+                            address=parsed_data.get("address"),
+                            acc_state=parsed_data.get("acc_state"),
+                            updated_at=datetime.utcnow()
+                        )
+                        db_session.add(new_cache)
+                        logger.info(f"✅ Created cache for device {device_id}")
+                    
+                    db_session.commit()
+                    return True
+                else:
+                    logger.info(f"ℹ️ No GPS data available for device {device_id} (device may be offline)")
+            else:
+                logger.info(f"ℹ️ No data returned for device {device_id} from VMS")
+        else:
+            logger.warning(f"⚠️ VMS API returned error for device {device_id}: {gps_result.get('message')}")
+        
+        return False
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Could not fetch initial data for device {device_id}: {e}")
+        return False
+    finally:
+        if close_db:
+            db_session.close()
 
 class DeviceResponse(BaseModel):
     id: int
@@ -293,6 +368,10 @@ def add_device_to_user(
                 # Device is unassigned - link it to user
                 device.assigned_user_id = user_id
                 db.commit()
+                
+                # Try to populate cache with VMS data (non-blocking)
+                _populate_device_cache(device_id, db)
+                
                 return {
                     "success": True,
                     "message": f"Device {device_id} has been added to your account",
@@ -305,6 +384,9 @@ def add_device_to_user(
                 }
             elif device.assigned_user_id == user_id:
                 # Device already assigned to this user
+                # Still try to populate cache in case it's missing
+                _populate_device_cache(device_id, db)
+                
                 return {
                     "success": True,
                     "message": f"Device {device_id} is already in your account",
@@ -322,6 +404,10 @@ def add_device_to_user(
                     old_user_id = device.assigned_user_id
                     device.assigned_user_id = user_id
                     db.commit()
+                    
+                    # Try to populate cache with VMS data (non-blocking)
+                    _populate_device_cache(device_id, db)
+                    
                     return {
                         "success": True,
                         "message": f"Device {device_id} has been transferred to your account (admin privilege)",
@@ -351,6 +437,9 @@ def add_device_to_user(
             db.add(new_device)
             db.commit()
             db.refresh(new_device)
+            
+            # Try to populate cache with VMS data (non-blocking)
+            _populate_device_cache(device_id, db)
             
             return {
                 "success": True,
