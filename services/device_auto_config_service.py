@@ -235,12 +235,22 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
         Send the configuration command to the device via text delivery.
         
         The command updates the device's INI configuration from an FTP server.
+        
+        API requires:
+        - name: Task name (required)
+        - content: Delivery content (required)
+        - contentTypes: ["1"]=Screen display, ["2"]=Voice broadcast (required)
+        - deviceId: Single device ID string (required)
+        - operator: Who triggered this (optional)
         """
         try:
             # Use manufacturer API to send text delivery
             result = manufacturer_api.send_text({
-                "deviceIds": [device_id],
-                "content": self.CONFIG_COMMAND
+                "name": f"AutoConfig-{device_id}",  # Required task name
+                "content": self.CONFIG_COMMAND,
+                "contentTypes": ["1"],  # 1 = Screen display (execute command)
+                "deviceId": device_id,  # Single device ID (not array)
+                "operator": "system"  # Who triggered this
             })
             
             logger.info(f"📡 Config command sent to {device_id}, response: {result}")
