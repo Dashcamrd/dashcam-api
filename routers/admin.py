@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from services.auth_service import get_current_user, create_user
 from services.manufacturer_api_service import manufacturer_api
 from services.device_sync_service import sync_devices_from_manufacturer, get_sync_status
+from services.device_auto_config_service import device_auto_config
 from models.user import UserCreate, UserResponse
 from models.user_db import UserDB
 from models.device_db import DeviceDB
 from database import SessionLocal
 from typing import Optional, List
 from pydantic import BaseModel
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -38,11 +40,141 @@ class ForwardingPolicyRequest(BaseModel):
     event_types: List[str]  # alarm, gps, video, etc.
     filters: Optional[dict] = None
 
+class ManualConfigRequest(BaseModel):
+    device_id: str
+
 def is_admin_user(current_user: dict) -> bool:
     """Check if current user has admin privileges"""
     # For now, simple check - in production you'd have role-based access
     # You can implement role checking based on your business logic
     return True  # Placeholder - implement proper admin role checking
+
+
+# ==================== AUTO-CONFIGURATION MANAGEMENT ====================
+
+@router.get("/autoconfig/status")
+def get_autoconfig_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get the current status of the device auto-configuration service.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return {
+        "success": True,
+        "service_status": device_auto_config.get_status()
+    }
+
+@router.get("/autoconfig/devices")
+def get_autoconfig_device_status(current_user: dict = Depends(get_current_user)):
+    """
+    Get configuration status for all devices.
+    Shows which devices are configured, pending, or failed.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    db = SessionLocal()
+    try:
+        devices = db.query(DeviceDB).all()
+        
+        configured = []
+        pending = []
+        in_progress = []
+        
+        for device in devices:
+            device_info = {
+                "device_id": device.device_id,
+                "name": device.name,
+                "status": device.status,
+                "configured": device.configured or "no",
+                "config_attempts": device.config_attempts or 0,
+                "last_attempt": device.config_last_attempt.isoformat() if device.config_last_attempt else None,
+                "last_online": device.last_online_at.isoformat() if device.last_online_at else None
+            }
+            
+            if device.configured == "yes":
+                configured.append(device_info)
+            elif device.status == "online" and (device.configured is None or device.configured == "no"):
+                in_progress.append(device_info)
+            else:
+                pending.append(device_info)
+        
+        return {
+            "success": True,
+            "summary": {
+                "total_devices": len(devices),
+                "configured": len(configured),
+                "in_progress": len(in_progress),
+                "pending": len(pending)
+            },
+            "devices": {
+                "configured": configured,
+                "in_progress": in_progress,
+                "pending": pending
+            }
+        }
+    finally:
+        db.close()
+
+@router.post("/autoconfig/configure/{device_id}")
+async def manual_configure_device(
+    device_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Manually trigger configuration for a specific device.
+    Useful for testing or forcing reconfiguration.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    result = await device_auto_config.configure_device_manually(device_id)
+    return result
+
+@router.post("/autoconfig/reset/{device_id}")
+async def reset_device_config(
+    device_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reset configuration status for a device to trigger reconfiguration.
+    The device will be configured again when it comes online.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    result = await device_auto_config.reset_device_config(device_id)
+    return result
+
+@router.post("/autoconfig/reset-all")
+def reset_all_device_configs(current_user: dict = Depends(get_current_user)):
+    """
+    Reset configuration status for ALL devices.
+    Use with caution - this will reconfigure all devices.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    db = SessionLocal()
+    try:
+        # Reset all devices
+        db.query(DeviceDB).update({
+            DeviceDB.configured: "no",
+            DeviceDB.config_attempts: 0,
+            DeviceDB.config_last_attempt: None
+        })
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "All device configurations have been reset. Devices will be reconfigured when they come online."
+        }
+    finally:
+        db.close()
+
+
+# ==================== USER MANAGEMENT ====================
 
 @router.post("/users", response_model=UserResponse)
 def create_new_user(
@@ -70,34 +202,6 @@ def create_new_user(
         return db_user
     finally:
         db.close()
-
-@router.post("/devices/sync")
-def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
-    """
-    Sync devices from manufacturer API to local database (admin only).
-    This will fetch all devices from manufacturer and add/update them in local database.
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        result = sync_devices_from_manufacturer()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
-
-@router.get("/devices/sync/status")
-def get_device_sync_status(current_user: dict = Depends(get_current_user)):
-    """
-    Get current device sync status and counts (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        return get_sync_status()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
 
 @router.get("/users")
 def list_all_users(
@@ -143,6 +247,83 @@ def list_all_users(
         }
     finally:
         db.close()
+
+@router.post("/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    new_password: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reset a user password by user ID (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = SessionLocal()
+        user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Hash the new password
+        from services.auth_service import hash_password
+        user.password_hash = hash_password(new_password)
+        db.add(user)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Password reset successfully for user {user.name}",
+            "user_id": user_id,
+            "invoice_no": user.invoice_no
+        }
+    except Exception as e:
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
+@router.post("/users/reset-password-by-invoice")
+def reset_password_by_invoice(
+    invoice_no: str,
+    new_password: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Reset password by invoice number (admin only).
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = SessionLocal()
+        user = db.query(UserDB).filter(UserDB.invoice_no == invoice_no).first()
+        
+        if not user:
+            db.close()
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Hash the new password
+        from services.auth_service import hash_password
+        user.password_hash = hash_password(new_password)
+        db.add(user)
+        db.commit()
+        db.close()
+        
+        return {
+            "success": True,
+            "message": f"Password reset successfully for user {user.name}",
+            "user_id": user.id,
+            "invoice_no": user.invoice_no
+        }
+    except Exception as e:
+        db.close()
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
+
+# ==================== DEVICE MANAGEMENT ====================
 
 @router.post("/devices/sync")
 def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
@@ -222,34 +403,6 @@ def assign_device_to_user(
     finally:
         db.close()
 
-@router.post("/devices/sync")
-def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
-    """
-    Sync devices from manufacturer API to local database (admin only).
-    This will fetch all devices from manufacturer and add/update them in local database.
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        result = sync_devices_from_manufacturer()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
-
-@router.get("/devices/sync/status")
-def get_device_sync_status(current_user: dict = Depends(get_current_user)):
-    """
-    Get current device sync status and counts (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        return get_sync_status()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
-
 @router.get("/devices/unassigned")
 def get_unassigned_devices(current_user: dict = Depends(get_current_user)):
     """
@@ -299,33 +452,8 @@ def get_unassigned_devices(current_user: dict = Depends(get_current_user)):
     finally:
         db.close()
 
-@router.post("/devices/sync")
-def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
-    """
-    Sync devices from manufacturer API to local database (admin only).
-    This will fetch all devices from manufacturer and add/update them in local database.
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        result = sync_devices_from_manufacturer()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
-@router.get("/devices/sync/status")
-def get_device_sync_status(current_user: dict = Depends(get_current_user)):
-    """
-    Get current device sync status and counts (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        return get_sync_status()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
+# ==================== SYSTEM CONFIGURATION ====================
 
 @router.post("/config/system")
 def manage_system_config(
@@ -393,6 +521,9 @@ def query_system_config(
             status_code=400, 
             detail=f"Failed to query configuration: {result.get('message', 'Unknown error')}"
         )
+
+
+# ==================== FORWARDING ====================
 
 @router.post("/forwarding/platform")
 def create_forwarding_platform(
@@ -468,6 +599,9 @@ def create_forwarding_policy(
             detail=f"Failed to create policy: {result.get('message', 'Unknown error')}"
         )
 
+
+# ==================== DASHBOARD ====================
+
 @router.get("/dashboard/overview")
 def get_admin_dashboard_overview(current_user: dict = Depends(get_current_user)):
     """
@@ -482,24 +616,15 @@ def get_admin_dashboard_overview(current_user: dict = Depends(get_current_user))
         total_users = db.query(UserDB).count()
         total_devices = db.query(DeviceDB).count()
         
-        # Get device status counts
-        online_devices = 0
-        offline_devices = 0
+        # Get configuration statistics
+        configured_devices = db.query(DeviceDB).filter(DeviceDB.configured == "yes").count()
+        unconfigured_devices = total_devices - configured_devices
         
-        try:
-            status_result = manufacturer_api.get_device_status_list()
-            if status_result.get("code") == 0:
-                device_statuses = status_result.get("data", {}).get("devices", [])
-                for status in device_statuses:
-                    if status.get("status") == "online":
-                        online_devices += 1
-                    else:
-                        offline_devices += 1
-        except:
-            pass
+        # Get device status counts
+        online_devices = db.query(DeviceDB).filter(DeviceDB.status == "online").count()
+        offline_devices = total_devices - online_devices
         
         # Get recent users (last 7 days)
-        from datetime import datetime, timedelta
         week_ago = datetime.utcnow() - timedelta(days=7)
         recent_users = db.query(UserDB).filter(UserDB.created_at >= week_ago).count()
         
@@ -510,115 +635,13 @@ def get_admin_dashboard_overview(current_user: dict = Depends(get_current_user))
                 "total_devices": total_devices,
                 "online_devices": online_devices,
                 "offline_devices": offline_devices,
+                "configured_devices": configured_devices,
+                "unconfigured_devices": unconfigured_devices,
                 "recent_users": recent_users,
                 "system_status": "operational",
+                "autoconfig_service": device_auto_config.get_status(),
                 "api_connection": "connected" if manufacturer_api.token else "disconnected"
             }
         }
     finally:
         db.close()
-
-@router.post("/devices/sync")
-def sync_devices_from_manufacturer_api(current_user: dict = Depends(get_current_user)):
-    """
-    Sync devices from manufacturer API to local database (admin only).
-    This will fetch all devices from manufacturer and add/update them in local database.
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        result = sync_devices_from_manufacturer()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
-
-@router.get("/devices/sync/status")
-def get_device_sync_status(current_user: dict = Depends(get_current_user)):
-    """
-    Get current device sync status and counts (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        return get_sync_status()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get sync status: {str(e)}")
-
-
-
-@router.post("/users/{user_id}/reset-password")
-def reset_user_password(
-    user_id: int,
-    new_password: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Reset a user password by user ID (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        db = SessionLocal()
-        user = db.query(UserDB).filter(UserDB.id == user_id).first()
-        
-        if not user:
-            db.close()
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Hash the new password
-        from services.auth_service import hash_password
-        user.password_hash = hash_password(new_password)
-        db.add(user)  # Add the user back to the session
-        db.commit()
-        db.close()
-        
-        return {
-            "success": True,
-            "message": f"Password reset successfully for user {user.name}",
-            "user_id": user_id,
-            "invoice_no": user.invoice_no
-        }
-    except Exception as e:
-        db.close()
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
-
-@router.post("/users/reset-password-by-invoice")
-def reset_password_by_invoice(
-    invoice_no: str,
-    new_password: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Reset password by invoice number (admin only).
-    """
-    if not is_admin_user(current_user):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        db = SessionLocal()
-        user = db.query(UserDB).filter(UserDB.invoice_no == invoice_no).first()
-        
-        if not user:
-            db.close()
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Hash the new password
-        from services.auth_service import hash_password
-        user.password_hash = hash_password(new_password)
-        db.add(user)  # Add the user back to the session
-        db.commit()
-        db.close()
-        
-        return {
-            "success": True,
-            "message": f"Password reset successfully for user {user.name}",
-            "user_id": user.id,
-            "invoice_no": user.invoice_no
-        }
-    except Exception as e:
-        db.close()
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
-

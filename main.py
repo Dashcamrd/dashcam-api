@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import logging
+import asyncio
 
 # Configure logging to show INFO level messages in Render logs
 logging.basicConfig(
@@ -14,6 +16,7 @@ from models.device_db import DeviceDB
 from models.user_db import UserDB
 from models.device_cache_db import DeviceCacheDB, AlarmDB  # New cache models
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB  # Push notification models
+from services.device_auto_config_service import device_auto_config  # Auto-configuration service
 
 # Create all tables (with error handling for connection issues)
 try:
@@ -23,10 +26,30 @@ except Exception as e:
     print(f"⚠️  Warning: Could not initialize database tables: {e}")
     print("   Tables will be created on first database access")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    Starts the device auto-configuration background worker.
+    """
+    # Startup
+    print("🚀 Starting background services...")
+    device_auto_config.start()
+    print("✅ Device Auto-Configuration Service started")
+    
+    yield  # App is running
+    
+    # Shutdown
+    print("🛑 Stopping background services...")
+    device_auto_config.stop()
+    print("✅ Background services stopped")
+
 app = FastAPI(
     title="Dashcam Management Platform API",
     description="Multi-tenant dashcam management platform with manufacturer API integration",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan  # Add lifespan for background services
 )
 
 # ✅ Allow frontend apps to talk to the backend

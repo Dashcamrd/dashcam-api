@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime
+from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Boolean
 from database import Base
 from datetime import datetime
 
@@ -15,3 +15,9 @@ class DeviceDB(Base):
     model = Column(String(100), nullable=True)
     firmware_version = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Auto-configuration tracking fields
+    configured = Column(String(10), default="no")  # "yes" or "no"
+    config_last_attempt = Column(DateTime, nullable=True)  # Last configuration attempt timestamp
+    config_attempts = Column(Integer, default=0)  # Number of configuration attempts
+    last_online_at = Column(DateTime, nullable=True)  # When device came online (for 3-min delay)
