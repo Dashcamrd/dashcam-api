@@ -90,7 +90,9 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
         Uses acc_status as the most reliable indicator that a device is truly online
         and ready to receive commands (ACC ON = car running, device powered).
         
-        This is much more efficient than calling the manufacturer API.
+        IMPORTANT: Also checks if data is fresh (updated recently).
+        If cache is stale (>10 min old), consider device offline even if acc_status=True.
+        This prevents trying to configure devices that went offline but have stale cache data.
         """
         db: Session = SessionLocal()
         try:
@@ -103,6 +105,7 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                 return
             
             now = datetime.utcnow()
+            STALE_THRESHOLD_MINUTES = 10  # Consider data stale if older than 10 min
             updated_count = 0
             
             for device in devices:
@@ -116,21 +119,27 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                 
                 old_status = device.status
                 
-                # Use acc_status as the primary indicator for "online and ready"
-                # acc_status = True means ACC is ON, car is running, device can receive commands
-                new_status = "online" if cache.acc_status else "offline"
+                # Check if cache is fresh (updated within threshold)
+                cache_is_fresh = False
+                if cache.updated_at:
+                    age_minutes = (now - cache.updated_at).total_seconds() / 60
+                    cache_is_fresh = age_minutes <= STALE_THRESHOLD_MINUTES
+                
+                # Device is online ONLY if:
+                # 1. acc_status = True (ACC is ON)
+                # 2. Cache is fresh (data received recently, not stale)
+                new_status = "online" if (cache.acc_status and cache_is_fresh) else "offline"
                 
                 # Update device status from cache
                 device.status = new_status
                 
-                # If device ACC just turned ON, update last_online_at for 3-min delay
+                # If device ACC just turned ON (with fresh data), update last_online_at
                 if old_status == "offline" and new_status == "online":
                     device.last_online_at = now
                     logger.info(f"📡 Device {device.device_id} ACC turned ON at {now}")
                     updated_count += 1
                 elif new_status == "online" and device.last_online_at is None:
                     # Device ACC was already ON but we don't have last_online_at
-                    # Use last_online_time from cache if available, otherwise use now
                     device.last_online_at = cache.last_online_time or now
                     updated_count += 1
             
