@@ -235,7 +235,8 @@ profiles:
         path: /api/v1/textDelivery/send
         method: POST
         request:
-          required: [deviceIds, content]
+          required: [name, content, contentTypes, deviceId]
+          optional: [operator, ignoreLowPower]
 
       # Statistics & Alarms
       stat_realtime_get_vehicle_alarm:
