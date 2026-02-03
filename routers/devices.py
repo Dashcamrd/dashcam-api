@@ -10,11 +10,43 @@ from pydantic import BaseModel
 from database import SessionLocal
 from models.device_db import DeviceDB
 from models.device_cache_db import DeviceCacheDB
+from models.fcm_token_db import UserNotificationSettingsDB
 from adapters import GPSAdapter
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _create_default_notification_settings(user_id: int, device_id: str, db_session, language: str = "en"):
+    """
+    Create default notification settings for a user-device pair.
+    Default: ACC notifications OFF (user must explicitly enable).
+    """
+    try:
+        # Check if settings already exist
+        existing = db_session.query(UserNotificationSettingsDB).filter(
+            UserNotificationSettingsDB.user_id == user_id,
+            UserNotificationSettingsDB.device_id == device_id
+        ).first()
+        
+        if not existing:
+            new_setting = UserNotificationSettingsDB(
+                user_id=user_id,
+                device_id=device_id,
+                acc_notification="none",  # OFF by default
+                language=language
+            )
+            db_session.add(new_setting)
+            db_session.commit()
+            logger.info(f"✅ Created default notification settings for user {user_id}, device {device_id}")
+            return True
+        else:
+            logger.debug(f"📝 Notification settings already exist for user {user_id}, device {device_id}")
+            return False
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to create notification settings: {e}")
+        return False
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -372,6 +404,9 @@ def add_device_to_user(
                 # Try to populate cache with VMS data (non-blocking)
                 _populate_device_cache(device_id, db)
                 
+                # Create default notification settings (OFF by default)
+                _create_default_notification_settings(user_id, device_id, db)
+                
                 return {
                     "success": True,
                     "message": f"Device {device_id} has been added to your account",
@@ -386,6 +421,9 @@ def add_device_to_user(
                 # Device already assigned to this user
                 # Still try to populate cache in case it's missing
                 _populate_device_cache(device_id, db)
+                
+                # Ensure notification settings exist (in case they were missed)
+                _create_default_notification_settings(user_id, device_id, db)
                 
                 return {
                     "success": True,
@@ -407,6 +445,9 @@ def add_device_to_user(
                     
                     # Try to populate cache with VMS data (non-blocking)
                     _populate_device_cache(device_id, db)
+                    
+                    # Create default notification settings for admin
+                    _create_default_notification_settings(user_id, device_id, db)
                     
                     return {
                         "success": True,
@@ -440,6 +481,9 @@ def add_device_to_user(
             
             # Try to populate cache with VMS data (non-blocking)
             _populate_device_cache(device_id, db)
+            
+            # Create default notification settings (OFF by default)
+            _create_default_notification_settings(user_id, device_id, db)
             
             return {
                 "success": True,

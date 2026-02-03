@@ -7,6 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from database import SessionLocal
 from models.user_db import UserDB
 from models.user import UserCreate, UserLogin
+from models.fcm_token_db import UserNotificationSettingsDB
 import os
 from dotenv import load_dotenv
 
@@ -193,6 +194,26 @@ def register_user(user: UserCreate):
                 
                 # Try to populate cache with VMS data (non-blocking)
                 _populate_device_cache_for_registration(device_id, db)
+                
+                # Create default notification settings (OFF by default)
+                try:
+                    existing_setting = db.query(UserNotificationSettingsDB).filter(
+                        UserNotificationSettingsDB.user_id == db_user.id,
+                        UserNotificationSettingsDB.device_id == device_id
+                    ).first()
+                    
+                    if not existing_setting:
+                        new_setting = UserNotificationSettingsDB(
+                            user_id=db_user.id,
+                            device_id=device_id,
+                            acc_notification="none",  # OFF by default
+                            language="en"
+                        )
+                        db.add(new_setting)
+                        db.commit()
+                        logger.info(f"✅ Created notification settings for user {db_user.id}, device {device_id}")
+                except Exception as ns_error:
+                    logger.warning(f"⚠️ Failed to create notification settings: {ns_error}")
                 
             except Exception as e:
                 # Log the error but don't fail registration

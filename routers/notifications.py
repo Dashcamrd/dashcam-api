@@ -338,3 +338,98 @@ def delete_device_notification_settings(
     
     return {"success": True, "message": "No settings found (already default)"}
 
+
+class UpdateLanguageRequest(BaseModel):
+    """Request to update language for all notification settings"""
+    language: str = Field(..., description="Language code: en or ar")
+
+
+@router.put("/language")
+def update_all_notification_language(
+    request: UpdateLanguageRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the language for ALL notification settings of the current user.
+    Called when user changes app language to keep notifications in sync.
+    """
+    user_id = current_user["user_id"]
+    
+    # Validate language
+    valid_languages = ["en", "ar"]
+    if request.language not in valid_languages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid language. Must be one of: {valid_languages}"
+        )
+    
+    # Update all settings for this user
+    updated_count = db.query(UserNotificationSettingsDB).filter(
+        UserNotificationSettingsDB.user_id == user_id
+    ).update({"language": request.language, "updated_at": datetime.utcnow()})
+    
+    db.commit()
+    
+    logger.info(f"✅ Updated language to '{request.language}' for {updated_count} notification settings (user {user_id})")
+    
+    return {
+        "success": True,
+        "message": f"Language updated to '{request.language}' for all devices",
+        "updated_count": updated_count
+    }
+
+
+@router.post("/migrate-existing-users")
+def migrate_existing_users_notification_settings(
+    db: Session = Depends(get_db)
+):
+    """
+    One-time migration: Create notification settings for all existing user-device pairs.
+    Sets acc_notification to 'none' (OFF) by default.
+    
+    This endpoint should be called once to populate settings for existing users
+    who registered before notification settings were auto-created.
+    """
+    from models.device_db import DeviceDB
+    
+    # Find all devices with assigned users
+    devices_with_users = db.query(DeviceDB).filter(
+        DeviceDB.assigned_user_id.isnot(None)
+    ).all()
+    
+    created_count = 0
+    skipped_count = 0
+    
+    for device in devices_with_users:
+        # Check if settings already exist
+        existing = db.query(UserNotificationSettingsDB).filter(
+            UserNotificationSettingsDB.user_id == device.assigned_user_id,
+            UserNotificationSettingsDB.device_id == device.device_id
+        ).first()
+        
+        if not existing:
+            # Create default settings (OFF)
+            new_setting = UserNotificationSettingsDB(
+                user_id=device.assigned_user_id,
+                device_id=device.device_id,
+                acc_notification="none",  # OFF by default
+                language="en"
+            )
+            db.add(new_setting)
+            created_count += 1
+        else:
+            skipped_count += 1
+    
+    db.commit()
+    
+    logger.info(f"✅ Migration complete: Created {created_count} settings, skipped {skipped_count} existing")
+    
+    return {
+        "success": True,
+        "message": "Migration completed",
+        "created": created_count,
+        "skipped": skipped_count,
+        "total_devices": len(devices_with_users)
+    }
+
