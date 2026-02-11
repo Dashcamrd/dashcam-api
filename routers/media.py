@@ -160,7 +160,7 @@ def start_playback(
         end_time=request.end_time,
         channel=request.channel,
         data_type=1,  # Playback
-        stream_type=1  # 0=main stream, 1=sub stream (using sub stream for faster loading)
+        stream_type=0  # 0=main stream (includes audio), 1=sub stream (faster but may lack audio)
     )
     
     # Call manufacturer API
@@ -322,14 +322,15 @@ def get_file_list(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     
-    # Parse date and create start/end of day timestamps in Saudi time (GMT+3)
+    # Parse date and create start/end of day timestamps in UTC
+    # The dashcam stores timestamps as device-local time in UTC format,
+    # so we query using UTC to match the manufacturer's timestamp convention.
     try:
-        saudi_tz = timezone(timedelta(hours=3))
         date_obj = datetime.strptime(request.date, "%Y-%m-%d")
-        start_of_day = date_obj.replace(hour=0, minute=0, second=0, tzinfo=saudi_tz)
-        end_of_day = date_obj.replace(hour=23, minute=59, second=59, tzinfo=saudi_tz)
+        start_of_day = date_obj.replace(hour=0, minute=0, second=0, tzinfo=timezone.utc)
+        end_of_day = date_obj.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
         
         # Convert to Unix timestamps
         start_timestamp = int(start_of_day.timestamp())
