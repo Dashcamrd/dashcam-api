@@ -23,6 +23,8 @@ import os
 
 from database import SessionLocal
 from models.device_cache_db import DeviceCacheDB, AlarmDB
+from models.device_db import DeviceDB
+from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB
 from services.geocoding_service import GeocodingService
 from services.notification_service import NotificationService
 
@@ -347,6 +349,121 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
         }
 
 
+def _check_speed_limit(db: Session, device_id: str, actual_speed_kmh: float, lat=None, lng=None):
+    """
+    Check if device speed exceeds any user's configured speed limit.
+    If so, create an alarm record and send a push notification.
+    
+    Includes a 5-minute cooldown per user-device to avoid notification spam.
+    
+    Args:
+        db: Database session
+        device_id: The dashcam device ID
+        actual_speed_kmh: Actual speed in km/h (already divided by 10)
+        lat: Current latitude
+        lng: Current longitude
+    """
+    from datetime import timedelta
+    
+    # Find all notification settings for this device that have a speed limit configured
+    settings = db.query(UserNotificationSettingsDB).filter(
+        UserNotificationSettingsDB.device_id == device_id,
+        UserNotificationSettingsDB.speed_limit.isnot(None),
+        UserNotificationSettingsDB.speed_limit > 0
+    ).all()
+    
+    if not settings:
+        return
+    
+    now = datetime.utcnow()
+    cooldown_minutes = 5  # Minimum time between speed alerts per user-device
+    
+    # Get device name for notification
+    device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+    device_name = device.name if device else device_id
+    
+    for setting in settings:
+        # Skip if speed is below this user's limit
+        if actual_speed_kmh < setting.speed_limit:
+            continue
+        
+        # Check cooldown — don't spam notifications
+        if setting.last_speed_alert_at:
+            elapsed = now - setting.last_speed_alert_at
+            if elapsed < timedelta(minutes=cooldown_minutes):
+                logger.debug(f"⏳ Speed alert cooldown for user {setting.user_id}, device {device_id}")
+                continue
+        
+        # Create alarm record in alarms table
+        alarm_type_id = 999001  # Custom type for speed limit violation
+        new_alarm = AlarmDB(
+            device_id=device_id,
+            alarm_type=alarm_type_id,
+            alarm_type_name="Speed Limit Exceeded",
+            alarm_level=2,  # Warning level
+            latitude=lat,
+            longitude=lng,
+            speed=actual_speed_kmh,
+            alarm_time=now,
+            alarm_data=json.dumps({
+                "type": "speed_limit",
+                "actual_speed": round(actual_speed_kmh, 1),
+                "speed_limit": setting.speed_limit,
+                "device_name": device_name
+            })
+        )
+        db.add(new_alarm)
+        
+        # Update cooldown timestamp
+        setting.last_speed_alert_at = now
+        
+        # Send push notification to all user's active FCM tokens
+        tokens = db.query(FCMTokenDB).filter(
+            FCMTokenDB.user_id == setting.user_id,
+            FCMTokenDB.is_active == True
+        ).all()
+        
+        if not tokens:
+            logger.debug(f"📝 No active FCM tokens for user {setting.user_id}")
+            continue
+        
+        # Build notification message based on user's language
+        lang = setting.language or "en"
+        if lang == "ar":
+            title = "⚠️ تجاوز حد السرعة"
+            body = f'سيارتك "{device_name}" تجاوزت حد السرعة {setting.speed_limit} كم/س (السرعة الحالية: {int(actual_speed_kmh)} كم/س)'
+        else:
+            title = "⚠️ Speed Limit Exceeded"
+            body = f'Your car "{device_name}" exceeded the speed limit of {setting.speed_limit} km/h (current speed: {int(actual_speed_kmh)} km/h)'
+        
+        sent_count = 0
+        for token_record in tokens:
+            success = NotificationService.send_notification(
+                token=token_record.fcm_token,
+                title=title,
+                body=body,
+                data={
+                    "type": "speed_limit",
+                    "device_id": device_id,
+                    "speed": str(int(actual_speed_kmh)),
+                    "limit": str(setting.speed_limit),
+                    "timestamp": now.isoformat()
+                }
+            )
+            if success:
+                token_record.last_used_at = now
+                sent_count += 1
+            else:
+                token_record.is_active = False
+        
+        logger.info(
+            f"🚨 Speed alert for {device_id}: {int(actual_speed_kmh)} km/h > {setting.speed_limit} km/h "
+            f"(sent {sent_count} notifications to user {setting.user_id})"
+        )
+    
+    db.commit()
+
+
 async def handle_gps_data(db: Session, data: dict):
     """
     Process forwarded GPS data.
@@ -467,6 +584,15 @@ async def handle_gps_data(db: Session, data: dict):
                 logger.info(f"📱 ACC change notification sent for {device_id}: {previous_acc_status} → {acc_status}")
             except Exception as e:
                 logger.error(f"❌ Failed to send ACC notification: {e}")
+        
+        # Check speed limit and send overspeed notification if needed
+        # Device speed is multiplied by 10 (e.g., 600 = 60 km/h)
+        if speed is not None and speed > 0:
+            actual_speed_kmh = speed / 10.0
+            try:
+                _check_speed_limit(db, device_id, actual_speed_kmh, lat, lng)
+            except Exception as e:
+                logger.error(f"❌ Failed speed limit check for {device_id}: {e}")
         
         processed_count += 1
         logger.info(f"✅ Stored GPS for device {device_id}: lat={lat}, lng={lng}, acc={acc_status}")

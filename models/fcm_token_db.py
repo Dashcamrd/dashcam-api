@@ -5,7 +5,7 @@ Stores Firebase Cloud Messaging tokens for push notifications
 and user notification preferences (ACC ON/OFF alerts).
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Enum, Float
 from database import Base
 from datetime import datetime
 import enum
@@ -65,6 +65,12 @@ class UserNotificationSettingsDB(Base):
     
     # User's preferred language for notifications
     language = Column(String(10), default="en")  # en, ar
+    
+    # Speed limit alert (km/h). NULL or 0 = disabled
+    speed_limit = Column(Integer, nullable=True, default=None)
+    
+    # Cooldown tracking for speed alerts (avoid spamming)
+    last_speed_alert_at = Column(DateTime, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)

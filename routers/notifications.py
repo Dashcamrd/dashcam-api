@@ -52,6 +52,10 @@ class UpdateNotificationSettingsRequest(BaseModel):
         default="en",
         description="Notification language: en (English), ar (Arabic)"
     )
+    speed_limit: Optional[int] = Field(
+        default=None,
+        description="Speed limit in km/h. NULL or 0 = disabled"
+    )
 
 
 class NotificationSettingsResponse(BaseModel):
@@ -221,25 +225,28 @@ def update_notification_settings(
     if existing:
         existing.acc_notification = request.acc_notification
         existing.language = request.language or "en"
+        existing.speed_limit = request.speed_limit if request.speed_limit and request.speed_limit > 0 else None
         existing.updated_at = datetime.utcnow()
     else:
         new_setting = UserNotificationSettingsDB(
             user_id=user_id,
             device_id=request.device_id,
             acc_notification=request.acc_notification,
-            language=request.language or "en"
+            language=request.language or "en",
+            speed_limit=request.speed_limit if request.speed_limit and request.speed_limit > 0 else None
         )
         db.add(new_setting)
     
     db.commit()
     
-    logger.info(f"✅ Updated notification settings for user {user_id}, device {request.device_id}")
+    logger.info(f"✅ Updated notification settings for user {user_id}, device {request.device_id} (speed_limit={request.speed_limit})")
     return {
         "success": True,
         "message": "Settings updated successfully",
         "device_id": request.device_id,
         "acc_notification": request.acc_notification,
-        "language": request.language or "en"
+        "language": request.language or "en",
+        "speed_limit": request.speed_limit
     }
 
 
@@ -267,7 +274,8 @@ def get_notification_settings(
             "device_id": s.device_id,
             "device_name": device_name,
             "acc_notification": s.acc_notification,
-            "language": s.language
+            "language": s.language,
+            "speed_limit": s.speed_limit
         })
     
     return {
@@ -299,6 +307,7 @@ def get_device_notification_settings(
             "device_id": device_id,
             "acc_notification": NotificationPreference.BOTH.value,
             "language": "en",
+            "speed_limit": None,
             "is_default": True
         }
     
@@ -311,6 +320,7 @@ def get_device_notification_settings(
         "device_name": device.name if device else None,
         "acc_notification": setting.acc_notification,
         "language": setting.language,
+        "speed_limit": setting.speed_limit,
         "is_default": False
     }
 
