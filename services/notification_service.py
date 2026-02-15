@@ -120,7 +120,7 @@ class NotificationService:
         title: str,
         body: str,
         data: Optional[Dict[str, str]] = None
-    ) -> bool:
+    ) -> Optional[bool]:
         """
         Send a push notification to a single device.
         
@@ -131,11 +131,13 @@ class NotificationService:
             data: Optional data payload
             
         Returns:
-            True if successful, False otherwise
+            True if successful
+            False if token is permanently invalid (should be deactivated)
+            None if temporary error (token should NOT be deactivated)
         """
         if not initialize_firebase():
             logger.warning("⚠️ Firebase not initialized, skipping notification")
-            return False
+            return None  # Don't deactivate tokens on server config issues
         
         try:
             message = messaging.Message(
@@ -167,11 +169,14 @@ class NotificationService:
             return True
             
         except messaging.UnregisteredError:
-            logger.warning(f"⚠️ Token unregistered: {token[:20]}...")
-            return False
+            logger.warning(f"⚠️ Token unregistered (permanently invalid): {token[:20]}...")
+            return False  # Token is dead — safe to deactivate
+        except messaging.SenderIdMismatchError:
+            logger.warning(f"⚠️ Token sender ID mismatch (permanently invalid): {token[:20]}...")
+            return False  # Token belongs to different project — safe to deactivate
         except Exception as e:
-            logger.error(f"❌ Failed to send notification: {e}")
-            return False
+            logger.error(f"❌ Failed to send notification (temporary error): {e}")
+            return None  # Don't deactivate — could be a temporary server/network issue
     
     @staticmethod
     def send_acc_notification(
@@ -243,7 +248,7 @@ class NotificationService:
             
             # Send to all user's devices
             for token_record in tokens:
-                success = NotificationService.send_notification(
+                result = NotificationService.send_notification(
                     token=token_record.fcm_token,
                     title=msg["title"],
                     body=msg["body"],
@@ -255,13 +260,15 @@ class NotificationService:
                     }
                 )
                 
-                if success:
-                    # Update last_used_at
+                if result is True:
+                    # Success — update last_used_at
                     token_record.last_used_at = datetime.utcnow()
                     sent_count += 1
-                else:
-                    # Mark token as inactive if unregistered
+                elif result is False:
+                    # Token permanently invalid — deactivate it
                     token_record.is_active = False
+                    logger.info(f"🗑️ Deactivated invalid token for user {setting.user_id}")
+                # result is None → temporary error, leave token active
         
         db.commit()
         logger.info(f"📱 Sent {sent_count} ACC notifications for device {device_id} (ACC={'ON' if acc_on else 'OFF'})")

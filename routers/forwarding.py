@@ -438,7 +438,7 @@ def _check_speed_limit(db: Session, device_id: str, actual_speed_kmh: float, lat
         
         sent_count = 0
         for token_record in tokens:
-            success = NotificationService.send_notification(
+            result = NotificationService.send_notification(
                 token=token_record.fcm_token,
                 title=title,
                 body=body,
@@ -450,11 +450,13 @@ def _check_speed_limit(db: Session, device_id: str, actual_speed_kmh: float, lat
                     "timestamp": now.isoformat()
                 }
             )
-            if success:
+            if result is True:
                 token_record.last_used_at = now
                 sent_count += 1
-            else:
+            elif result is False:
+                # Token permanently invalid — deactivate it
                 token_record.is_active = False
+            # result is None → temporary error, leave token active
         
         logger.info(
             f"🚨 Speed alert for {device_id}: {int(actual_speed_kmh)} km/h > {setting.speed_limit} km/h "
