@@ -1,8 +1,77 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from models.user import UserCreate, UserLogin, ChangePassword, UserResponse, PasswordResetRequest, ProfileUpdateRequest, ProfileResponse
 import services.auth_service as auth_service
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+@router.get("/delete-account-info", response_class=HTMLResponse)
+def delete_account_info():
+    """
+    Public web page explaining how to delete your Road app account.
+    Required by Google Play Store data safety policy.
+    """
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Delete Your Account - Road App</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                max-width: 600px;
+                margin: 40px auto;
+                padding: 20px;
+                color: #333;
+                line-height: 1.6;
+            }
+            h1 { color: #1a1a2e; }
+            .steps { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
+            .steps li { margin: 10px 0; }
+            .warning { background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 20px 0; }
+            .contact { background: #e8f4fd; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <h1>🚗 Road App - Delete Your Account</h1>
+        <p>You can delete your Road app account and all associated data at any time.</p>
+
+        <div class="steps">
+            <h2>How to delete your account:</h2>
+            <ol>
+                <li>Open the <strong>Road</strong> app on your device</li>
+                <li>Go to <strong>Settings</strong> (gear icon)</li>
+                <li>Tap <strong>Account Settings</strong></li>
+                <li>Tap <strong>Delete Account</strong></li>
+                <li>Confirm by entering your password</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Warning:</strong> Account deletion is permanent and cannot be undone.
+        </div>
+
+        <h2>What data is deleted:</h2>
+        <ul>
+            <li>Your account credentials (invoice number, email, password)</li>
+            <li>Your profile information (name, phone number)</li>
+            <li>Your device associations</li>
+            <li>Push notification tokens</li>
+        </ul>
+
+        <h2>Data retention:</h2>
+        <p>All user data is deleted immediately upon account deletion. No data is retained after deletion.</p>
+
+        <div class="contact">
+            <strong>Need help?</strong><br>
+            Contact us at <a href="mailto:fahad@dashcamrd.com">fahad@dashcamrd.com</a>
+        </div>
+    </body>
+    </html>
+    """
 
 @router.post("/register")
 def register(user: UserCreate):
