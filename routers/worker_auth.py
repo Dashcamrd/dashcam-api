@@ -96,6 +96,59 @@ def worker_login(req: WorkerLoginRequest, db: Session = Depends(_get_db)):
 #  Admin — create worker account
 # ════════════════════════════════════════════════════════════
 
+@router.get("/workers")
+def list_workers(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """Admin lists all workers with order/inventory summary."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from models.order_db import OrderDB
+    from models.inventory_db import WorkerInventoryDB
+    from sqlalchemy import func
+
+    workers = db.query(UserDB).filter(UserDB.role == "worker").all()
+
+    result = []
+    for w in workers:
+        # Count orders by status
+        total_orders = db.query(func.count(OrderDB.id)).filter(
+            OrderDB.assigned_worker_id == w.id
+        ).scalar() or 0
+
+        active_orders = db.query(func.count(OrderDB.id)).filter(
+            OrderDB.assigned_worker_id == w.id,
+            OrderDB.status.in_(["new", "assigned", "in_progress"]),
+        ).scalar() or 0
+
+        completed_orders = db.query(func.count(OrderDB.id)).filter(
+            OrderDB.assigned_worker_id == w.id,
+            OrderDB.status.in_(["installed", "completed"]),
+        ).scalar() or 0
+
+        # Inventory items count
+        inventory_items = db.query(func.count(WorkerInventoryDB.id)).filter(
+            WorkerInventoryDB.worker_id == w.id,
+            WorkerInventoryDB.quantity > 0,
+        ).scalar() or 0
+
+        result.append({
+            "id": w.id,
+            "name": w.name,
+            "phone": w.phone,
+            "city": w.city,
+            "created_at": w.created_at.isoformat() if w.created_at else None,
+            "total_orders": total_orders,
+            "active_orders": active_orders,
+            "completed_orders": completed_orders,
+            "inventory_items": inventory_items,
+        })
+
+    return {"workers": result}
+
+
 @router.post("/create")
 def create_worker(
     req: CreateWorkerRequest,
