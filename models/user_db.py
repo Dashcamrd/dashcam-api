@@ -13,4 +13,6 @@ class UserDB(Base):
     email = Column(String(200), nullable=True)
     phone = Column(String(50), nullable=True)
     is_admin = Column(Boolean, default=False)
+    role = Column(String(20), default="user")  # "user", "worker", "admin"
+    city = Column(String(100), nullable=True)   # Worker's assigned city
     created_at = Column(DateTime, default=datetime.utcnow)

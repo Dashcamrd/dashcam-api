@@ -267,7 +267,8 @@ def login_user(user: UserLogin):
             "sub": db_user.invoice_no,
             "user_id": db_user.id,
             "name": db_user.name,
-            "is_admin": db_user.is_admin
+            "is_admin": db_user.is_admin,
+            "role": db_user.role or "user",
         })
         return {
             "access_token": token, 
@@ -277,7 +278,8 @@ def login_user(user: UserLogin):
                 "invoice_no": db_user.invoice_no,
                 "name": db_user.name,
                 "email": db_user.email,
-                "is_admin": db_user.is_admin
+                "is_admin": db_user.is_admin,
+                "role": db_user.role or "user",
             }
         }
     finally:
@@ -332,7 +334,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             "invoice_no": invoice_no,
             "user_id": user_id,
             "name": payload.get("name"),
-            "is_admin": payload.get("is_admin", False)
+            "is_admin": payload.get("is_admin", False),
+            "role": payload.get("role", "user"),
         }
     except JWTError:
         raise HTTPException(
