@@ -255,20 +255,39 @@ def register_user(user: UserCreate):
         db.close()
 
 def login_user(user: UserLogin):
-    """Login with invoice number and password"""
+    """
+    Unified login for all user types (user, worker, admin).
+    Accepts phone number OR invoice number as identifier.
+    Returns role in response for navigation.
+    """
+    from sqlalchemy import or_
+    
     db: Session = SessionLocal()
     try:
-        # Assuming UserLogin now has invoice_no instead of username
-        db_user = db.query(UserDB).filter(UserDB.invoice_no == user.invoice_no).first()
+        identifier = user.invoice_no  # This field now accepts phone or invoice_no
+        
+        # Try to find user by invoice_no OR phone
+        db_user = db.query(UserDB).filter(
+            or_(
+                UserDB.invoice_no == identifier,
+                UserDB.phone == identifier
+            )
+        ).first()
+        
         if not db_user or not verify_password(user.password, db_user.password_hash):
-            raise HTTPException(status_code=401, detail="Invalid invoice number or password")
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Determine role (default to "user" if not set)
+        role = db_user.role or "user"
+        if db_user.is_admin:
+            role = "admin"
         
         token = create_access_token({
             "sub": db_user.invoice_no,
             "user_id": db_user.id,
             "name": db_user.name,
             "is_admin": db_user.is_admin,
-            "role": db_user.role or "user",
+            "role": role,
         })
         return {
             "access_token": token, 
@@ -276,10 +295,11 @@ def login_user(user: UserLogin):
             "user": {
                 "id": db_user.id,
                 "invoice_no": db_user.invoice_no,
+                "phone": db_user.phone,
                 "name": db_user.name,
                 "email": db_user.email,
                 "is_admin": db_user.is_admin,
-                "role": db_user.role or "user",
+                "role": role,
             }
         }
     finally:
