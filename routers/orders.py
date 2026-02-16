@@ -50,6 +50,7 @@ class AssignOrderRequest(BaseModel):
 class UpdateStatusRequest(BaseModel):
     status: str                        # new / contacted / completed
     worker_notes: Optional[str] = None
+    payment_status: Optional[str] = None  # "paid" / "unpaid"
 
 
 class AddPhotoRequest(BaseModel):
@@ -580,6 +581,8 @@ def update_order_status(
 
     if req.worker_notes:
         order.worker_notes = req.worker_notes
+    if req.payment_status is not None:
+        order.payment_status = req.payment_status
 
     # Timestamp milestones
     now = datetime.utcnow()
