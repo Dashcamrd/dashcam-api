@@ -48,7 +48,7 @@ class AssignOrderRequest(BaseModel):
 
 
 class UpdateStatusRequest(BaseModel):
-    status: str                        # new / assigned / in_progress / installed / completed / cancelled
+    status: str                        # new / contacted / completed
     worker_notes: Optional[str] = None
 
 
@@ -359,14 +359,13 @@ async def rekaz_webhook(request: Request):
             discount=data.get("discount") or data.get("Discount") or 0,
         )
 
-        # Auto-assign by city
+        # Auto-assign by city (status stays "new")
         worker = db.query(UserDB).filter(
             UserDB.role == "worker",
             UserDB.city == branch,
         ).first()
         if worker:
             order.assigned_worker_id = worker.id
-            order.status = "assigned"
             order.assigned_at = datetime.utcnow()
 
         db.add(order)
@@ -424,7 +423,6 @@ def create_manual_order(
         assigned_worker_id=req.assigned_worker_id,
     )
     if req.assigned_worker_id:
-        order.status = "assigned"
         order.assigned_at = datetime.utcnow()
 
     db.add(order)
@@ -444,6 +442,7 @@ def create_manual_order(
 def list_orders(
     status: Optional[str] = None,
     worker_id: Optional[int] = None,
+    search: Optional[str] = None,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
@@ -453,6 +452,7 @@ def list_orders(
     List orders.
     - Admin: all orders (optionally filtered by status / worker_id).
     - Worker: only orders assigned to them.
+    - search: filter by customer name or phone (partial match).
     """
     user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
     if not user:
@@ -469,6 +469,11 @@ def list_orders(
         q = q.filter(OrderDB.status == status)
     if worker_id and (user.is_admin or user.role == "admin"):
         q = q.filter(OrderDB.assigned_worker_id == worker_id)
+    if search:
+        q = q.filter(
+            (OrderDB.customer_name.ilike(f"%{search}%")) |
+            (OrderDB.customer_phone.ilike(f"%{search}%"))
+        )
 
     total = q.count()
     orders = q.order_by(OrderDB.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
@@ -523,7 +528,6 @@ def assign_order(
         raise HTTPException(status_code=404, detail="Worker not found")
 
     order.assigned_worker_id = worker.id
-    order.status = "assigned"
     order.assigned_at = datetime.utcnow()
     db.commit()
 
@@ -545,7 +549,7 @@ def update_order_status(
 ):
     """
     Update order status.
-    Workers can move: assigned → in_progress → installed → completed.
+    Workers can move: new → contacted → completed (requires 3 photos).
     Admins can set any status.
     """
     order = db.query(OrderDB).filter(OrderDB.id == order_id).first()
@@ -558,9 +562,18 @@ def update_order_status(
     if user.role == "worker" and order.assigned_worker_id != user.id:
         raise HTTPException(status_code=403, detail="Not your order")
 
-    valid_statuses = {"new", "assigned", "in_progress", "installed", "completed", "cancelled"}
+    valid_statuses = {"new", "contacted", "completed"}
     if req.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+
+    # Block completing unless 3 photos are uploaded
+    if req.status == "completed":
+        photo_count = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).count()
+        if photo_count < 3:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot complete order: {photo_count}/3 photos uploaded. Please upload 3 photos first."
+            )
 
     old_status = order.status
     order.status = req.status
@@ -570,7 +583,7 @@ def update_order_status(
 
     # Timestamp milestones
     now = datetime.utcnow()
-    if req.status == "in_progress" and not order.started_at:
+    if req.status == "contacted" and not order.started_at:
         order.started_at = now
     elif req.status == "completed" and not order.completed_at:
         order.completed_at = now

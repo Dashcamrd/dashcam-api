@@ -37,7 +37,7 @@ class OrderDB(Base):
     # Assignment
     assigned_worker_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     
-    # Status: new → assigned → in_progress → installed → completed → cancelled
+    # Status: new → contacted → completed
     status = Column(String(30), default="new", index=True)
     
     # Notes
