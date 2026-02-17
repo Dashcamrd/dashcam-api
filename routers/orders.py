@@ -397,9 +397,19 @@ async def rekaz_webhook(request: Request):
         first_item = items[0] if items else {}
 
         # Product info from first item
-        product_name = first_item.get("ProductName", "") or data.get("ProductName", "") or "RASD 1.0"
+        raw_product_name = first_item.get("ProductName", "") or data.get("ProductName", "") or "RASD 1.0"
         item_name = first_item.get("Name", "") or ""  # Full name with option
         sku = first_item.get("ProductId", "") or ""
+
+        # Map Rekaz ProductId → our short product name (e.g. "RASD 1.0")
+        product_name = raw_product_name  # fallback
+        if sku:
+            matched_product = db.query(ProductDB).filter(ProductDB.sku == str(sku)).first()
+            if matched_product:
+                product_name = matched_product.name
+                logger.info(f"📦 Mapped Rekaz ProductId {sku[:12]}… → {product_name}")
+            else:
+                logger.warning(f"⚠️ No product found for Rekaz ProductId {sku}, using raw name: {raw_product_name}")
 
         # Price with 15% VAT (Rekaz sends pre-VAT amounts)
         item_total_pre_vat = first_item.get("TotalPrice", 0) or 0
