@@ -70,6 +70,54 @@ def _get_db():
         db.close()
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Calculate distance in km between two lat/lng points using Haversine formula."""
+    import math
+    R = 6371  # Earth radius in km
+    d_lat = math.radians(lat2 - lat1)
+    d_lng = math.radians(lng2 - lng1)
+    a = (math.sin(d_lat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(d_lng / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _find_worker_by_geofence(lat: float, lng: float, db: Session):
+    """
+    Find the best worker whose geofence contains the given coordinates.
+    Returns the closest worker if the point is inside multiple geofences,
+    or None if no match.
+    """
+    if not lat or not lng:
+        return None
+
+    workers = db.query(UserDB).filter(
+        UserDB.role == "worker",
+        UserDB.geofence_lat.isnot(None),
+        UserDB.geofence_lng.isnot(None),
+        UserDB.geofence_radius_km.isnot(None),
+    ).all()
+
+    best_worker = None
+    best_distance = float("inf")
+
+    for w in workers:
+        dist = _haversine_km(lat, lng, w.geofence_lat, w.geofence_lng)
+        if dist <= w.geofence_radius_km and dist < best_distance:
+            best_distance = dist
+            best_worker = w
+
+    if best_worker:
+        logger.info(
+            f"📍 Geofence match: worker {best_worker.name} "
+            f"(distance {best_distance:.1f}km / radius {best_worker.geofence_radius_km}km)"
+        )
+    else:
+        logger.info(f"📍 No geofence match for coords ({lat}, {lng})")
+
+    return best_worker
+
+
 def _order_to_dict(order: OrderDB, db: Session) -> dict:
     """Convert OrderDB row to JSON-serialisable dict."""
     # Get photos
@@ -415,16 +463,20 @@ async def rekaz_webhook(request: Request):
             discount=discount,
         )
 
-        # Auto-assign by city ONLY if service includes installation
+        # Auto-assign ONLY if service includes installation
         if not is_without_install:
-            worker = db.query(UserDB).filter(
-                UserDB.role == "worker",
-                UserDB.city == branch,
-            ).first()
-            if worker:
-                order.assigned_worker_id = worker.id
+            assigned_worker = _find_worker_by_geofence(lat, lng, db)
+            if not assigned_worker:
+                # Fallback to city-based matching
+                assigned_worker = db.query(UserDB).filter(
+                    UserDB.role == "worker",
+                    UserDB.city == branch,
+                ).first()
+                if assigned_worker:
+                    logger.info(f"👷 Fallback: assigned to worker {assigned_worker.name} (city match: {branch})")
+            if assigned_worker:
+                order.assigned_worker_id = assigned_worker.id
                 order.assigned_at = datetime.utcnow()
-                logger.info(f"👷 Auto-assigned to worker {worker.name} (city: {branch})")
         else:
             logger.info(f"📦 Order is delivery only (بدون تركيب) — no worker assigned")
 

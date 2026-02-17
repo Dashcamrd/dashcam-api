@@ -32,6 +32,9 @@ class CreateWorkerRequest(BaseModel):
     phone: str
     password: str
     city: Optional[str] = None
+    geofence_lat: Optional[float] = None
+    geofence_lng: Optional[float] = None
+    geofence_radius_km: Optional[float] = None
 
 
 class UpdateWorkerRequest(BaseModel):
@@ -39,6 +42,9 @@ class UpdateWorkerRequest(BaseModel):
     phone: Optional[str] = None
     city: Optional[str] = None
     password: Optional[str] = None
+    geofence_lat: Optional[float] = None
+    geofence_lng: Optional[float] = None
+    geofence_radius_km: Optional[float] = None
 
 
 # ════════════════════════════════════════════════════════════
@@ -139,6 +145,9 @@ def list_workers(
             "name": w.name,
             "phone": w.phone,
             "city": w.city,
+            "geofence_lat": w.geofence_lat,
+            "geofence_lng": w.geofence_lng,
+            "geofence_radius_km": w.geofence_radius_km,
             "created_at": w.created_at.isoformat() if w.created_at else None,
             "total_orders": total_orders,
             "active_orders": active_orders,
@@ -175,13 +184,16 @@ def create_worker(
         phone=req.phone,
         role="worker",
         city=req.city,
+        geofence_lat=req.geofence_lat,
+        geofence_lng=req.geofence_lng,
+        geofence_radius_km=req.geofence_radius_km,
         is_admin=False,
     )
     db.add(worker)
     db.commit()
     db.refresh(worker)
 
-    logger.info(f"✅ Worker created: {worker.name} (phone: {worker.phone}, city: {worker.city})")
+    logger.info(f"✅ Worker created: {worker.name} (phone: {worker.phone}, city: {worker.city}, geofence: {worker.geofence_lat},{worker.geofence_lng} r={worker.geofence_radius_km}km)")
 
     return {
         "success": True,
@@ -190,6 +202,9 @@ def create_worker(
             "name": worker.name,
             "phone": worker.phone,
             "city": worker.city,
+            "geofence_lat": worker.geofence_lat,
+            "geofence_lng": worker.geofence_lng,
+            "geofence_radius_km": worker.geofence_radius_km,
             "role": "worker",
         },
     }
@@ -222,6 +237,12 @@ def update_worker(
         worker.city = req.city
     if req.password is not None:
         worker.password_hash = hash_password(req.password)
+    if req.geofence_lat is not None:
+        worker.geofence_lat = req.geofence_lat
+    if req.geofence_lng is not None:
+        worker.geofence_lng = req.geofence_lng
+    if req.geofence_radius_km is not None:
+        worker.geofence_radius_km = req.geofence_radius_km
 
     db.commit()
 
@@ -232,6 +253,9 @@ def update_worker(
             "name": worker.name,
             "phone": worker.phone,
             "city": worker.city,
+            "geofence_lat": worker.geofence_lat,
+            "geofence_lng": worker.geofence_lng,
+            "geofence_radius_km": worker.geofence_radius_km,
         },
     }
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, Float
 from database import Base
 from datetime import datetime
 
@@ -15,4 +15,7 @@ class UserDB(Base):
     is_admin = Column(Boolean, default=False)
     role = Column(String(20), default="user")  # "user", "worker", "admin"
     city = Column(String(100), nullable=True)   # Worker's assigned city
+    geofence_lat = Column(Float, nullable=True)       # Center latitude of service area
+    geofence_lng = Column(Float, nullable=True)       # Center longitude of service area
+    geofence_radius_km = Column(Float, nullable=True)  # Radius in km
     created_at = Column(DateTime, default=datetime.utcnow)

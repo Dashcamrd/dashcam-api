@@ -43,6 +43,17 @@ def run():
     else:
         logger.info("✔ city column already exists")
 
+    # Geofence columns for workers
+    if "geofence_lat" not in existing_cols:
+        logger.info("Adding geofence columns to users...")
+        conn.execute(text("ALTER TABLE users ADD COLUMN geofence_lat DOUBLE PRECISION"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN geofence_lng DOUBLE PRECISION"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN geofence_radius_km DOUBLE PRECISION"))
+        conn.commit()
+        logger.info("✅ geofence columns added")
+    else:
+        logger.info("✔ geofence columns already exist")
+
     # ── 2. Create new tables via SQLAlchemy ───────────────────
     # Import all models so Base.metadata knows about them
     from models.order_db import OrderDB, OrderPhotoDB
