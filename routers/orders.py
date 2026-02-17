@@ -577,7 +577,7 @@ def list_orders(
     worker_id: Optional[int] = None,
     search: Optional[str] = None,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(1000, ge=1, le=5000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(_get_db),
 ):
