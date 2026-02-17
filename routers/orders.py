@@ -58,6 +58,24 @@ class AddPhotoRequest(BaseModel):
     photo_type: Optional[str] = None   # before / after / receipt
 
 
+class EditOrderRequest(BaseModel):
+    """Admin can edit any order field."""
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_email: Optional[str] = None
+    district_name: Optional[str] = None
+    city: Optional[str] = None
+    number_of_cars: Optional[int] = None
+    dashcam_type: Optional[str] = None
+    service_type: Optional[str] = None
+    notes: Optional[str] = None
+    admin_notes: Optional[str] = None
+    payment_status: Optional[str] = None
+    total_amount: Optional[float] = None
+    discount: Optional[float] = None
+    assigned_worker_id: Optional[int] = None
+
+
 # ════════════════════════════════════════════════════════════
 #  Helpers
 # ════════════════════════════════════════════════════════════
@@ -154,11 +172,12 @@ def _order_to_dict(order: OrderDB, db: Session) -> dict:
         "payment_status": order.payment_status,
         "total_amount": order.total_amount,
         "discount": order.discount,
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "assigned_at": order.assigned_at.isoformat() if order.assigned_at else None,
-        "started_at": order.started_at.isoformat() if order.started_at else None,
-        "completed_at": order.completed_at.isoformat() if order.completed_at else None,
-        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+        "net_amount": round((order.total_amount or 0) - (order.discount or 0), 2),
+        "created_at": (order.created_at.isoformat() + "Z") if order.created_at else None,
+        "assigned_at": (order.assigned_at.isoformat() + "Z") if order.assigned_at else None,
+        "started_at": (order.started_at.isoformat() + "Z") if order.started_at else None,
+        "completed_at": (order.completed_at.isoformat() + "Z") if order.completed_at else None,
+        "updated_at": (order.updated_at.isoformat() + "Z") if order.updated_at else None,
         "photos": [
             {
                 "id": p.id,
@@ -711,6 +730,46 @@ def update_order_status(
 
     logger.info(f"📋 Order #{order.id} status: {old_status} → {req.status}")
 
+    return {"success": True, "order": _order_to_dict(order, db)}
+
+
+# ════════════════════════════════════════════════════════════
+#  EDIT ORDER (admin)
+# ════════════════════════════════════════════════════════════
+
+@router.put("/{order_id}")
+def edit_order(
+    order_id: int,
+    req: EditOrderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """Admin can edit any order fields."""
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    if not user or (not user.is_admin and user.role != "admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    order = db.query(OrderDB).filter(OrderDB.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    for field in [
+        "customer_name", "customer_phone", "customer_email",
+        "district_name", "city", "number_of_cars", "dashcam_type",
+        "service_type", "notes", "admin_notes", "payment_status",
+        "total_amount", "discount", "assigned_worker_id",
+    ]:
+        value = getattr(req, field, None)
+        if value is not None:
+            setattr(order, field, value)
+
+    if req.assigned_worker_id is not None and not order.assigned_at:
+        order.assigned_at = datetime.utcnow()
+
+    order.updated_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(f"📝 Order #{order.id} edited by admin {user.name}")
     return {"success": True, "order": _order_to_dict(order, db)}
 
 
