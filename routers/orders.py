@@ -289,9 +289,10 @@ async def rekaz_webhook(request: Request):
         logger.info(f"📦 Rekaz webhook: {event_name}")
         logger.info(f"📦 Payload: {json.dumps(payload, ensure_ascii=False)[:1000]}")
 
-        # Only process reservation created / confirmed
-        if event_name not in ("ReservationCreatedEvent", "ReservationConfirmedEvent"):
-            return {"status": "ignored", "event": event_name}
+        # Accept ANY event from Rekaz — log everything for debugging
+        # Previously filtered to only ReservationCreatedEvent/ReservationConfirmedEvent
+        # but Rekaz may send OrderCreatedEvent or other event types
+        logger.info(f"📦 Full Payload: {json.dumps(payload, ensure_ascii=False)}")
 
         data = payload.get("Data", {})
         customer = data.get("customer", {}) or data.get("Customer", {})
