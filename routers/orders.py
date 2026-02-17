@@ -136,17 +136,26 @@ def _find_worker_by_geofence(lat: float, lng: float, db: Session):
     return best_worker
 
 
-def _order_to_dict(order: OrderDB, db: Session) -> dict:
-    """Convert OrderDB row to JSON-serialisable dict."""
-    # Get photos
-    photos = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order.id).all()
+def _order_to_dict(order: OrderDB, db: Session, *, photos_map: dict = None, workers_map: dict = None) -> dict:
+    """Convert OrderDB row to JSON-serialisable dict.
+    
+    photos_map / workers_map: optional pre-loaded dicts to avoid N+1 queries.
+    """
+    # Get photos – use pre-loaded map when available
+    if photos_map is not None:
+        photos = photos_map.get(order.id, [])
+    else:
+        photos = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order.id).all()
 
-    # Get worker name
+    # Get worker name – use pre-loaded map when available
     worker_name = None
     if order.assigned_worker_id:
-        worker = db.query(UserDB).filter(UserDB.id == order.assigned_worker_id).first()
-        if worker:
-            worker_name = worker.name
+        if workers_map is not None:
+            worker_name = workers_map.get(order.assigned_worker_id)
+        else:
+            worker = db.query(UserDB).filter(UserDB.id == order.assigned_worker_id).first()
+            if worker:
+                worker_name = worker.name
 
     return {
         "id": order.id,
@@ -611,11 +620,26 @@ def list_orders(
     total = q.count()
     orders = q.order_by(OrderDB.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
 
+    # ── Batch pre-load photos & workers to avoid N+1 queries ──
+    order_ids = [o.id for o in orders]
+    worker_ids = list({o.assigned_worker_id for o in orders if o.assigned_worker_id})
+
+    photos_map: dict = {}
+    if order_ids:
+        all_photos = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id.in_(order_ids)).all()
+        for p in all_photos:
+            photos_map.setdefault(p.order_id, []).append(p)
+
+    workers_map: dict = {}
+    if worker_ids:
+        workers = db.query(UserDB).filter(UserDB.id.in_(worker_ids)).all()
+        workers_map = {w.id: w.name for w in workers}
+
     return {
         "total": total,
         "page": page,
         "limit": limit,
-        "orders": [_order_to_dict(o, db) for o in orders],
+        "orders": [_order_to_dict(o, db, photos_map=photos_map, workers_map=workers_map) for o in orders],
     }
 
 
