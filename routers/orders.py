@@ -280,6 +280,10 @@ async def rekaz_webhook(request: Request):
     """
     Receive order from Rekaz webhook.
     URL: https://dashcam-api.onrender.com/orders/webhook/rekaz
+
+    Rekaz sends two events per order:
+      - MerchandiseOrderCreatedEvent  → create order
+      - MerchandiseOrderCompletedEvent → update payment to "paid"
     """
     db = SessionLocal()
     try:
@@ -287,67 +291,117 @@ async def rekaz_webhook(request: Request):
 
         event_name = payload.get("EventName", "")
         logger.info(f"📦 Rekaz webhook: {event_name}")
-        logger.info(f"📦 Payload: {json.dumps(payload, ensure_ascii=False)[:1000]}")
-
-        # Accept ANY event from Rekaz — log everything for debugging
-        # Previously filtered to only ReservationCreatedEvent/ReservationConfirmedEvent
-        # but Rekaz may send OrderCreatedEvent or other event types
         logger.info(f"📦 Full Payload: {json.dumps(payload, ensure_ascii=False)}")
 
         data = payload.get("Data", {})
-        customer = data.get("customer", {}) or data.get("Customer", {})
-        custom_fields = data.get("CustomFields", []) or data.get("customFields", []) or []
+        customer = data.get("Customer", {}) or data.get("customer", {})
+        rekaz_code = data.get("Code", "") or ""  # e.g. "ORDER-6nwlv"
 
-        # Parse custom fields into a dict
-        cf = {}
-        for field in custom_fields:
+        # ── CompletedEvent → just update payment status ──
+        if event_name == "MerchandiseOrderCompletedEvent" and rekaz_code:
+            existing = db.query(OrderDB).filter(OrderDB.rekaz_order_id == rekaz_code).first()
+            if existing:
+                existing.payment_status = "paid"
+                existing.updated_at = datetime.utcnow()
+                db.commit()
+                logger.info(f"✅ Order #{existing.id} marked paid (CompletedEvent)")
+                return {"status": "updated", "order_id": existing.id}
+            # If not found, fall through and create it
+            logger.info(f"⚠️ CompletedEvent for unknown order {rekaz_code}, creating new")
+
+        # ── Duplicate check by Code ──
+        if rekaz_code:
+            existing = db.query(OrderDB).filter(OrderDB.rekaz_order_id == rekaz_code).first()
+            if existing:
+                logger.info(f"⚠️ Duplicate Rekaz order {rekaz_code}")
+                return {"status": "duplicate", "order_id": existing.id}
+
+        # ── Parse Items array ──
+        items = data.get("Items", []) or []
+        first_item = items[0] if items else {}
+
+        # Product info from first item
+        product_name = first_item.get("ProductName", "") or data.get("ProductName", "") or "RASD 1.0"
+        item_name = first_item.get("Name", "") or ""  # Full name with option
+        sku = first_item.get("ProductId", "") or ""
+
+        # Price with 15% VAT (Rekaz sends pre-VAT amounts)
+        item_total_pre_vat = first_item.get("TotalPrice", 0) or 0
+        item_discount_pre_vat = first_item.get("Discount", 0) or 0
+        total_amount = round(item_total_pre_vat * 1.15, 2)
+        discount = round(item_discount_pre_vat * 1.15, 2)
+
+        # Sum quantities from all items
+        num_cars = 0
+        for item in items:
+            num_cars += item.get("Quantity", 1) or 1
+
+        # ── Determine service type from item name / PriceName ──
+        price_name_raw = first_item.get("PriceName", "") or ""
+        is_without_install = "بدون تركيب" in item_name or "بدون تركيب" in price_name_raw
+        if is_without_install:
+            service_type = "delivery_only"
+        elif "مع تركيب" in item_name or "مع تركيب" in price_name_raw:
+            service_type = "delivery_and_install"
+        else:
+            service_type = "delivery_and_install"
+
+        # ── Payment status from Rekaz Status field ──
+        rekaz_status = data.get("Status", "") or ""
+        if rekaz_status == "Completed":
+            payment_status = "paid"
+        else:
+            payment_status = "unpaid"
+
+        # ── Customer location from CustomFields (Maps type) ──
+        lat, lng = None, None
+        item_custom_fields = first_item.get("CustomFields", []) or []
+        for cf in item_custom_fields:
+            if cf.get("Type") == "Maps" and cf.get("Value"):
+                try:
+                    coords = cf["Value"].split(",")
+                    lat = float(coords[0].strip())
+                    lng = float(coords[1].strip())
+                    logger.info(f"📍 Customer location from Rekaz: {lat}, {lng}")
+                except (ValueError, IndexError):
+                    logger.warning(f"⚠️ Failed to parse Maps value: {cf.get('Value')}")
+                break
+
+        # ── Parse top-level custom fields for district etc. ──
+        top_custom_fields = data.get("CustomFields", []) or []
+        cf_dict = {}
+        for field in top_custom_fields:
             label = field.get("Label", "") or field.get("label", "")
             value = field.get("Value", "") or field.get("value", "")
             if isinstance(value, dict):
                 value = value.get("Selected", str(value))
-            cf[label] = value
+            cf_dict[label] = value
 
-        # Rekaz reference
-        rekaz_number = str(data.get("number") or data.get("Number") or payload.get("Id", ""))
-
-        # Duplicate check
-        existing = db.query(OrderDB).filter(OrderDB.rekaz_order_id == rekaz_number).first()
-        if existing:
-            logger.info(f"⚠️ Duplicate Rekaz order {rekaz_number}")
-            return {"status": "duplicate", "order_id": existing.id}
-
-        # Map fields
         district = (
-            cf.get("حي", "") or cf.get("الحي", "") or
-            cf.get("District", "") or cf.get("Location Details", "") or ""
+            cf_dict.get("حي", "") or cf_dict.get("الحي", "") or
+            cf_dict.get("District", "") or ""
         )
-        num_cars_str = cf.get("عدد السيارات", "") or cf.get("Number of Cars", "") or "1"
-        try:
-            num_cars = int(num_cars_str)
-        except (ValueError, TypeError):
-            num_cars = 1
+        notes = cf_dict.get("ملاحظات", "") or cf_dict.get("Notes", "") or ""
 
-        service_type_raw = cf.get("نوع الخدمة", "") or cf.get("Service Type", "")
-        service_type = "install_only" if ("تركيب فقط" in service_type_raw or "install only" in service_type_raw.lower()) else "delivery_and_install"
+        # Branch / city
+        branch = data.get("BranchNameAr", "") or data.get("BranchName", "") or "الرياض"
+        # "الفرع الافتراضي" means "Default Branch" — use الرياض as default city
+        if "الافتراضي" in branch or not branch:
+            branch = "الرياض"
 
-        notes = cf.get("ملاحظات", "") or cf.get("Notes", "") or ""
-        product_name = data.get("productName") or data.get("ProductName") or "RASD 1.0"
-        sku = data.get("Sku") or data.get("sku") or ""
-        branch = data.get("BranchName") or data.get("branchName") or "الرياض"
-
-        # Geocode district
-        lat, lng = None, None
-        if district:
+        # Fallback geocoding if no Maps coordinates
+        if not lat and district:
             lat, lng = _geocode_district(district, branch)
 
         order = OrderDB(
-            rekaz_order_id=rekaz_number,
+            rekaz_order_id=rekaz_code or str(payload.get("Id", "")),
             rekaz_reservation_id=str(payload.get("Id", "")),
             customer_name=customer.get("Name") or customer.get("name") or "Unknown",
             customer_phone=customer.get("MobileNumber") or customer.get("phone") or "",
-            customer_email=customer.get("Email") or customer.get("email"),
+            customer_email=customer.get("Email") or customer.get("email") or None,
             district_name=district,
             city=branch,
+            full_address=item_name,  # Store full product+option name
             latitude=lat,
             longitude=lng,
             number_of_cars=num_cars,
@@ -356,27 +410,33 @@ async def rekaz_webhook(request: Request):
             service_type=service_type,
             status="new",
             notes=notes,
-            payment_status=data.get("status") or data.get("Status"),
-            total_amount=data.get("price") or data.get("Price") or 0,
-            discount=data.get("discount") or data.get("Discount") or 0,
+            payment_status=payment_status,
+            total_amount=total_amount,
+            discount=discount,
         )
 
-        # Auto-assign by city (status stays "new")
-        worker = db.query(UserDB).filter(
-            UserDB.role == "worker",
-            UserDB.city == branch,
-        ).first()
-        if worker:
-            order.assigned_worker_id = worker.id
-            order.assigned_at = datetime.utcnow()
+        # Auto-assign by city ONLY if service includes installation
+        if not is_without_install:
+            worker = db.query(UserDB).filter(
+                UserDB.role == "worker",
+                UserDB.city == branch,
+            ).first()
+            if worker:
+                order.assigned_worker_id = worker.id
+                order.assigned_at = datetime.utcnow()
+                logger.info(f"👷 Auto-assigned to worker {worker.name} (city: {branch})")
+        else:
+            logger.info(f"📦 Order is delivery only (بدون تركيب) — no worker assigned")
 
         db.add(order)
         db.commit()
         db.refresh(order)
 
-        logger.info(f"✅ Order #{order.id} created from Rekaz (ref: {rekaz_number})")
+        logger.info(f"✅ Order #{order.id} created from Rekaz (code: {rekaz_code}, paid: {payment_status}, total: {total_amount} SAR)")
 
-        _notify_workers_new_order(order, db)
+        # Only notify if a worker is assigned
+        if order.assigned_worker_id:
+            _notify_workers_new_order(order, db)
 
         return {"status": "created", "order_id": order.id}
     except Exception as e:
