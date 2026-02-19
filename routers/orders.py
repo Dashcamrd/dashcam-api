@@ -808,6 +808,45 @@ def edit_order(
 
 
 # ════════════════════════════════════════════════════════════
+#  DELETE order (worker / admin)
+# ════════════════════════════════════════════════════════════
+
+@router.delete("/{order_id}")
+def delete_order(
+    order_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """
+    Delete an order.
+    - Workers can only delete orders assigned to them.
+    - Admins can delete any order.
+    """
+    order = db.query(OrderDB).filter(OrderDB.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+
+    # Permission check
+    if user.role == "worker" and order.assigned_worker_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your order")
+    elif not user.is_admin and user.role not in ("admin", "worker"):
+        raise HTTPException(status_code=403, detail="Not authorised")
+
+    # Delete associated photos first
+    db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).delete()
+
+    # Delete the order
+    db.delete(order)
+    db.commit()
+
+    logger.info(f"🗑️ Order #{order_id} deleted by {user.name} (role: {user.role})")
+
+    return {"success": True, "message": f"Order #{order_id} deleted"}
+
+
+# ════════════════════════════════════════════════════════════
 #  ADD PHOTO to order (worker)
 # ════════════════════════════════════════════════════════════
 
