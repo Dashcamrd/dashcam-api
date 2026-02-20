@@ -733,13 +733,13 @@ def update_order_status(
     if req.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
 
-    # Block completing unless 3 photos are uploaded
+    # Block completing unless at least 1 photo is uploaded
     if req.status == "completed":
         photo_count = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).count()
-        if photo_count < 3:
+        if photo_count < 1:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot complete order: {photo_count}/3 photos uploaded. Please upload 3 photos first."
+                detail=f"Cannot complete order: {photo_count}/1 photos uploaded. Please upload at least 1 photo first."
             )
 
     old_status = order.status

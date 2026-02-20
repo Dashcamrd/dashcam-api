@@ -16,3 +16,4 @@ cryptography
 PyYAML
 resend
 firebase-admin
+cloudinary

@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 
 from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding, notifications
-from routers import orders, inventory, worker_auth  # OMS
+from routers import orders, inventory, worker_auth, uploads  # OMS
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
@@ -88,6 +88,7 @@ app.include_router(notifications.router)  # Push notifications management
 app.include_router(orders.router)       # Order Management System
 app.include_router(inventory.router)    # Inventory management
 app.include_router(worker_auth.router)  # Worker authentication
+app.include_router(uploads.router)      # Photo uploads (Cloudinary)
 
 @app.get("/")
 def root():
