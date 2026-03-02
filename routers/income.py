@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, text
 from database import SessionLocal
 from models.order_db import OrderDB
-from models.inventory_db import WorkerPaymentDB
+from models.inventory_db import WorkerPaymentDB, ManualCarsDB
 from models.user_db import UserDB
 from services.auth_service import get_current_user
 from datetime import datetime, date, timedelta
@@ -34,6 +34,12 @@ class AddPaymentRequest(BaseModel):
     amount: float
     description: Optional[str] = None
     payment_date: Optional[str] = None  # ISO format, defaults to now
+
+
+class AddManualCarsRequest(BaseModel):
+    worker_id: int
+    cars_count: int
+    notes: Optional[str] = None
 
 
 def _get_db():
@@ -76,13 +82,14 @@ def get_income_summary(
         raise HTTPException(status_code=403, detail="Not authorised")
 
     now = datetime.utcnow()
-    target_year = year or now.year
+    target_year = year  # None means "all time" — no year filter
 
     # Build query — use Saudi timezone for correct month/day boundaries
-    query = db.query(OrderDB).filter(
-        OrderDB.status == "completed",
-        extract('year', _saudi_updated_at) == target_year,
-    )
+    query = db.query(OrderDB).filter(OrderDB.status == "completed")
+
+    # Filter by year only if provided (None = all time)
+    if target_year is not None:
+        query = query.filter(extract('year', _saudi_updated_at) == target_year)
 
     # Filter by worker (None = all workers)
     if target_worker_id is not None:
@@ -105,6 +112,30 @@ def get_income_summary(
         target_worker = db.query(UserDB).filter(UserDB.id == target_worker_id).first()
         worker_name = target_worker.name if target_worker else "Unknown"
 
+    # ── All-time totals (for "Since Beginning" and مستحق calculation) ──
+    alltime_query = db.query(OrderDB).filter(OrderDB.status == "completed")
+    if target_worker_id is not None:
+        alltime_query = alltime_query.filter(OrderDB.assigned_worker_id == target_worker_id)
+    alltime_orders = alltime_query.all()
+    alltime_system_cars = sum(o.number_of_cars or 1 for o in alltime_orders)
+
+    # Manual cars (off-system)
+    manual_query = db.query(func.coalesce(func.sum(ManualCarsDB.cars_count), 0))
+    if target_worker_id is not None:
+        manual_query = manual_query.filter(ManualCarsDB.worker_id == target_worker_id)
+    alltime_manual_cars = int(manual_query.scalar() or 0)
+
+    alltime_total_cars = alltime_system_cars + alltime_manual_cars
+    alltime_total_income = alltime_total_cars * RATE_PER_CAR
+
+    # Total payments transferred
+    payments_query = db.query(func.coalesce(func.sum(WorkerPaymentDB.amount), 0.0))
+    if target_worker_id is not None:
+        payments_query = payments_query.filter(WorkerPaymentDB.worker_id == target_worker_id)
+    total_payments = float(payments_query.scalar() or 0)
+
+    due_amount = alltime_total_income - total_payments
+
     return {
         "worker_id": target_worker_id,
         "worker_name": worker_name,
@@ -114,6 +145,13 @@ def get_income_summary(
         "total_cars": total_cars,
         "rate_per_car": RATE_PER_CAR,
         "total_income": total_income,
+        # All-time data
+        "alltime_system_cars": alltime_system_cars,
+        "alltime_manual_cars": alltime_manual_cars,
+        "alltime_total_cars": alltime_total_cars,
+        "alltime_total_income": alltime_total_income,
+        "total_payments": total_payments,
+        "due_amount": due_amount,
     }
 
 
@@ -366,4 +404,90 @@ def delete_payment(
 
     logger.info(f"🗑️ Payment #{payment_id} deleted by {user.name}")
     return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════
+#  MANUAL CARS — off-system installations
+# ════════════════════════════════════════════════════════════
+
+@router.post("/manual-cars")
+def add_manual_cars(
+    req: AddManualCarsRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """Add manual car installations (outside system). Admin only."""
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    if not user or (not user.is_admin and user.role != "admin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    worker = db.query(UserDB).filter(UserDB.id == req.worker_id).first()
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+
+    entry = ManualCarsDB(
+        worker_id=req.worker_id,
+        cars_count=req.cars_count,
+        notes=req.notes,
+        created_by=user.id,
+        created_by_name=user.name,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+
+    logger.info(f"🚗 {req.cars_count} manual cars added for worker #{req.worker_id} by {user.name}")
+
+    return {
+        "success": True,
+        "entry": {
+            "id": entry.id,
+            "worker_id": entry.worker_id,
+            "cars_count": entry.cars_count,
+            "notes": entry.notes,
+            "created_by_name": entry.created_by_name,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        },
+    }
+
+
+@router.get("/manual-cars")
+def get_manual_cars(
+    worker_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """Get manual car entries for a worker."""
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role == "worker":
+        target = user.id
+    elif user.is_admin or user.role == "admin":
+        target = worker_id
+    else:
+        raise HTTPException(status_code=403, detail="Not authorised")
+
+    query = db.query(ManualCarsDB).order_by(ManualCarsDB.created_at.desc())
+    if target is not None:
+        query = query.filter(ManualCarsDB.worker_id == target)
+
+    entries = query.all()
+    total = sum(e.cars_count for e in entries)
+
+    return {
+        "total_manual_cars": total,
+        "entries": [
+            {
+                "id": e.id,
+                "worker_id": e.worker_id,
+                "cars_count": e.cars_count,
+                "notes": e.notes,
+                "created_by_name": e.created_by_name,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entries
+        ],
+    }
 

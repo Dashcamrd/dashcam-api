@@ -52,6 +52,22 @@ class InventoryTransactionDB(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ManualCarsDB(Base):
+    """
+    Manual car additions for installations done outside the system.
+    Admin adds these to track total installations that don't have orders.
+    """
+    __tablename__ = "manual_cars"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    worker_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    cars_count = Column(Integer, nullable=False)
+    notes = Column(String(500), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_by_name = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class WorkerPaymentDB(Base):
     """
     Manual payment records from company to worker.
