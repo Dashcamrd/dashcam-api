@@ -210,10 +210,18 @@ def get_income_chart(
             saudi_day
         ).all()
 
+        # For the current month, only include days up to today (Saudi time = UTC+3)
+        from datetime import timezone as tz
+        saudi_now = datetime.now(tz(timedelta(hours=3)))
+        if target_year == saudi_now.year and target_month == saudi_now.month:
+            max_day = saudi_now.day
+        else:
+            max_day = days_in_month
+
         data_points = []
         cumulative_cars = 0
         cumulative_income = 0.0
-        for d in range(1, days_in_month + 1):
+        for d in range(1, max_day + 1):
             row = next((r for r in results if int(r.period) == d), None)
             daily_cars = int(row.cars or 0) if row else 0
             daily_orders = int(row.orders or 0) if row else 0
@@ -233,6 +241,7 @@ def get_income_chart(
             "period": "month",
             "month": target_month,
             "year": target_year,
+            "days_in_month": days_in_month,
             "data": data_points,
         }
 
