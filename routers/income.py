@@ -3,13 +3,13 @@ Income Router — Worker income tracking, chart data, and payment records
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, text
 from database import SessionLocal
 from models.order_db import OrderDB
 from models.inventory_db import WorkerPaymentDB
 from models.user_db import UserDB
 from services.auth_service import get_current_user
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 from pydantic import BaseModel
 import logging
@@ -19,9 +19,10 @@ router = APIRouter(prefix="/income", tags=["Income"])
 
 RATE_PER_CAR = 100.0  # SAR per installed car
 
-# Convert UTC stored timestamps to Saudi local time (UTC+3) for correct month/day grouping
-# Without this, orders completed between 12:00-2:59 AM Saudi time get counted in the wrong month
-_saudi_updated_at = func.timezone('Asia/Riyadh', func.timezone('UTC', OrderDB.updated_at))
+# Convert UTC stored timestamps to Saudi local time (UTC+3) for correct month/day grouping.
+# Saudi Arabia does not observe DST, so a fixed +3h offset is always correct.
+# Without this, orders completed between 12:00-2:59 AM Saudi time get counted in the wrong month.
+_saudi_updated_at = OrderDB.updated_at + text("INTERVAL '3 hours'")
 
 
 # ════════════════════════════════════════════════════════════
@@ -95,6 +96,8 @@ def get_income_summary(
 
     total_cars = sum(o.number_of_cars or 1 for o in completed_orders)
     total_income = total_cars * RATE_PER_CAR
+
+    logger.info(f"📊 Income summary: worker={target_worker_id}, month={month}, year={target_year} → {len(completed_orders)} orders, {total_cars} cars")
 
     # Get worker name
     worker_name = "All"
