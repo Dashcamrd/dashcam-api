@@ -52,9 +52,10 @@ def get_income_summary(
     db: Session = Depends(_get_db),
 ):
     """
-    Get income summary for a worker in a specific month.
+    Get income summary for a worker in a specific month/year.
     - Workers see only their own income.
-    - Admins can query any worker by passing worker_id.
+    - Admins can query any worker by passing worker_id, or all workers if worker_id is omitted.
+    - If month is omitted, returns the full year summary.
     Uses updated_at to determine which month an order belongs to.
     """
     user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
@@ -65,34 +66,42 @@ def get_income_summary(
     if user.role == "worker":
         target_worker_id = user.id
     elif user.is_admin or user.role == "admin":
-        target_worker_id = worker_id if worker_id else user.id
+        target_worker_id = worker_id  # None = all workers
     else:
         raise HTTPException(status_code=403, detail="Not authorised")
 
     now = datetime.utcnow()
-    target_month = month or now.month
     target_year = year or now.year
 
-    # Query completed orders for this worker in the target month
-    # Use updated_at as the determining timestamp
-    completed_orders = db.query(OrderDB).filter(
-        OrderDB.assigned_worker_id == target_worker_id,
+    # Build query
+    query = db.query(OrderDB).filter(
         OrderDB.status == "completed",
-        extract('month', OrderDB.updated_at) == target_month,
         extract('year', OrderDB.updated_at) == target_year,
-    ).all()
+    )
+
+    # Filter by worker (None = all workers)
+    if target_worker_id is not None:
+        query = query.filter(OrderDB.assigned_worker_id == target_worker_id)
+
+    # Filter by month only if provided (omitted = full year)
+    if month is not None:
+        query = query.filter(extract('month', OrderDB.updated_at) == month)
+
+    completed_orders = query.all()
 
     total_cars = sum(o.number_of_cars or 1 for o in completed_orders)
     total_income = total_cars * RATE_PER_CAR
 
     # Get worker name
-    target_worker = db.query(UserDB).filter(UserDB.id == target_worker_id).first()
-    worker_name = target_worker.name if target_worker else "Unknown"
+    worker_name = "All"
+    if target_worker_id is not None:
+        target_worker = db.query(UserDB).filter(UserDB.id == target_worker_id).first()
+        worker_name = target_worker.name if target_worker else "Unknown"
 
     return {
         "worker_id": target_worker_id,
         "worker_name": worker_name,
-        "month": target_month,
+        "month": month,
         "year": target_year,
         "total_orders": len(completed_orders),
         "total_cars": total_cars,
@@ -126,7 +135,7 @@ def get_income_chart(
     if user.role == "worker":
         target_worker_id = user.id
     elif user.is_admin or user.role == "admin":
-        target_worker_id = worker_id if worker_id else user.id
+        target_worker_id = worker_id  # None = all workers
     else:
         raise HTTPException(status_code=403, detail="Not authorised")
 
@@ -135,15 +144,18 @@ def get_income_chart(
 
     if period == "year":
         # Monthly aggregation for the year
-        results = db.query(
+        base_query = db.query(
             extract('month', OrderDB.updated_at).label('period'),
             func.sum(OrderDB.number_of_cars).label('cars'),
             func.count(OrderDB.id).label('orders'),
         ).filter(
-            OrderDB.assigned_worker_id == target_worker_id,
             OrderDB.status == "completed",
             extract('year', OrderDB.updated_at) == target_year,
-        ).group_by(
+        )
+        if target_worker_id is not None:
+            base_query = base_query.filter(OrderDB.assigned_worker_id == target_worker_id)
+
+        results = base_query.group_by(
             extract('month', OrderDB.updated_at)
         ).order_by(
             extract('month', OrderDB.updated_at)
@@ -170,16 +182,19 @@ def get_income_chart(
         import calendar
         days_in_month = calendar.monthrange(target_year, target_month)[1]
 
-        results = db.query(
+        base_query = db.query(
             extract('day', OrderDB.updated_at).label('period'),
             func.sum(OrderDB.number_of_cars).label('cars'),
             func.count(OrderDB.id).label('orders'),
         ).filter(
-            OrderDB.assigned_worker_id == target_worker_id,
             OrderDB.status == "completed",
             extract('month', OrderDB.updated_at) == target_month,
             extract('year', OrderDB.updated_at) == target_year,
-        ).group_by(
+        )
+        if target_worker_id is not None:
+            base_query = base_query.filter(OrderDB.assigned_worker_id == target_worker_id)
+
+        results = base_query.group_by(
             extract('day', OrderDB.updated_at)
         ).order_by(
             extract('day', OrderDB.updated_at)
