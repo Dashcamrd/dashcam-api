@@ -1044,6 +1044,10 @@ def delete_order(
     # Delete associated data first
     db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).delete()
     db.query(OrderActivityDB).filter(OrderActivityDB.order_id == order_id).delete()
+    # Nullify inventory transaction references (keep audit trail)
+    db.query(InventoryTransactionDB).filter(
+        InventoryTransactionDB.order_id == order_id
+    ).update({InventoryTransactionDB.order_id: None})
 
     # Delete the order
     db.delete(order)
