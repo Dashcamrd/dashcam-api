@@ -4,7 +4,7 @@ Orders Router — Rekaz webhook + full order CRUD for workers & admin
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from models.order_db import OrderDB, OrderPhotoDB
+from models.order_db import OrderDB, OrderPhotoDB, OrderActivityDB
 from models.inventory_db import WorkerInventoryDB, InventoryTransactionDB, ProductDB
 from models.user_db import UserDB
 from models.fcm_token_db import FCMTokenDB
@@ -98,6 +98,31 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
          math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
          math.sin(d_lng / 2) ** 2)
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _log_activity(
+    db: Session,
+    order_id: int,
+    event_type: str,
+    description: str,
+    old_value: str = None,
+    new_value: str = None,
+    performed_by: int = None,
+    performer_name: str = None,
+):
+    """Record an activity event in the order timeline."""
+    activity = OrderActivityDB(
+        order_id=order_id,
+        event_type=event_type,
+        description=description,
+        old_value=old_value,
+        new_value=new_value,
+        performed_by=performed_by,
+        performer_name=performer_name,
+        created_at=datetime.utcnow(),
+    )
+    db.add(activity)
+    # Caller should commit
 
 
 def _find_worker_by_geofence(lat: float, lng: float, db: Session):
@@ -296,7 +321,7 @@ def _deduct_inventory(order: OrderDB, db: Session):
     ).first()
 
     if inv:
-        inv.quantity = max(0, inv.quantity - order.number_of_cars)
+        inv.quantity = inv.quantity - order.number_of_cars
         inv.updated_at = datetime.utcnow()
     else:
         inv = WorkerInventoryDB(
@@ -347,6 +372,44 @@ def _geocode_district(district: str, city: str = "الرياض") -> tuple:
     return None, None
 
 
+def _reverse_geocode_city(lat: float, lng: float) -> Optional[str]:
+    """
+    Reverse-geocode (lat, lng) to extract the city name.
+    Uses Nominatim free API. Returns Arabic city name if available.
+    Returns None on failure.
+    """
+    import requests as _requests
+    try:
+        resp = _requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": lat,
+                "lon": lng,
+                "format": "json",
+                "accept-language": "ar",
+                "zoom": 10,
+            },
+            headers={"User-Agent": "RoadApp/1.0"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            address = data.get("address", {})
+            # Try city → town → county → state for the best match
+            city = (
+                address.get("city")
+                or address.get("town")
+                or address.get("county")
+                or address.get("state")
+            )
+            if city:
+                logger.info(f"📍 Reverse geocoded ({lat}, {lng}) → {city}")
+                return city
+    except Exception as e:
+        logger.warning(f"⚠️ Reverse geocode failed for ({lat}, {lng}): {e}")
+    return None
+
+
 # ════════════════════════════════════════════════════════════
 #  REKAZ WEBHOOK — auto-receive orders
 # ════════════════════════════════════════════════════════════
@@ -377,8 +440,13 @@ async def rekaz_webhook(request: Request):
         if event_name == "MerchandiseOrderCompletedEvent" and rekaz_code:
             existing = db.query(OrderDB).filter(OrderDB.rekaz_order_id == rekaz_code).first()
             if existing:
+                old_pay = existing.payment_status or "unpaid"
                 existing.payment_status = "paid"
                 existing.updated_at = datetime.utcnow()
+                _log_activity(db, existing.id, "payment_changed",
+                              "Payment completed (Rekaz)",
+                              old_value=old_pay, new_value="paid",
+                              performer_name="Rekaz")
                 db.commit()
                 logger.info(f"✅ Order #{existing.id} marked paid (CompletedEvent)")
                 return {"status": "updated", "order_id": existing.id}
@@ -469,15 +537,29 @@ async def rekaz_webhook(request: Request):
         )
         notes = cf_dict.get("ملاحظات", "") or cf_dict.get("Notes", "") or ""
 
-        # Branch / city
-        branch = data.get("BranchNameAr", "") or data.get("BranchName", "") or "الرياض"
-        # "الفرع الافتراضي" means "Default Branch" — use الرياض as default city
-        if "الافتراضي" in branch or not branch:
-            branch = "الرياض"
+        # ── Determine city ──
+        # 1. Check custom fields for explicit city
+        city_from_cf = (
+            cf_dict.get("المدينة", "") or cf_dict.get("مدينة", "") or
+            cf_dict.get("City", "") or ""
+        )
+
+        # 2. Branch name from Rekaz
+        branch = data.get("BranchNameAr", "") or data.get("BranchName", "") or ""
+        if "الافتراضي" in branch:
+            branch = ""  # "Default Branch" is not a real city
+
+        # 3. Reverse geocode from lat/lng for the most accurate city
+        city_from_geo = None
+        if lat and lng:
+            city_from_geo = _reverse_geocode_city(lat, lng)
+
+        # Pick best city: custom field > reverse geocode > branch > fallback
+        city = city_from_cf or city_from_geo or branch or "الرياض"
 
         # Fallback geocoding if no Maps coordinates
         if not lat and district:
-            lat, lng = _geocode_district(district, branch)
+            lat, lng = _geocode_district(district, city)
 
         order = OrderDB(
             rekaz_order_id=rekaz_code or str(payload.get("Id", "")),
@@ -486,7 +568,7 @@ async def rekaz_webhook(request: Request):
             customer_phone=customer.get("MobileNumber") or customer.get("phone") or "",
             customer_email=customer.get("Email") or customer.get("email") or None,
             district_name=district,
-            city=branch,
+            city=city,
             full_address=item_name,  # Store full product+option name
             latitude=lat,
             longitude=lng,
@@ -508,10 +590,10 @@ async def rekaz_webhook(request: Request):
                 # Fallback to city-based matching
                 assigned_worker = db.query(UserDB).filter(
                     UserDB.role == "worker",
-                    UserDB.city == branch,
+                    UserDB.city == city,
                 ).first()
                 if assigned_worker:
-                    logger.info(f"👷 Fallback: assigned to worker {assigned_worker.name} (city match: {branch})")
+                    logger.info(f"👷 Fallback: assigned to worker {assigned_worker.name} (city match: {city})")
             if assigned_worker:
                 order.assigned_worker_id = assigned_worker.id
                 order.assigned_at = datetime.utcnow()
@@ -521,6 +603,23 @@ async def rekaz_webhook(request: Request):
         db.add(order)
         db.commit()
         db.refresh(order)
+
+        # ── Log timeline events ──
+        _log_activity(db, order.id, "order_created",
+                      f"Order received from Rekaz ({rekaz_code})",
+                      performer_name="Rekaz")
+        if order.assigned_worker_id:
+            worker = db.query(UserDB).filter(UserDB.id == order.assigned_worker_id).first()
+            _log_activity(db, order.id, "worker_assigned",
+                          f"Auto-assigned to {worker.name if worker else 'worker'}",
+                          new_value=str(order.assigned_worker_id),
+                          performer_name="System")
+        if payment_status == "paid":
+            _log_activity(db, order.id, "payment_changed",
+                          "Payment received (Rekaz)",
+                          old_value="unpaid", new_value="paid",
+                          performer_name="Rekaz")
+        db.commit()
 
         logger.info(f"✅ Order #{order.id} created from Rekaz (code: {rekaz_code}, paid: {payment_status}, total: {total_amount} SAR)")
 
@@ -580,6 +679,21 @@ def create_manual_order(
     db.add(order)
     db.commit()
     db.refresh(order)
+
+    # ── Log timeline ──
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    _log_activity(db, order.id, "order_created",
+                  "Order created manually",
+                  performed_by=current_user["user_id"],
+                  performer_name=user.name if user else "Admin")
+    if req.assigned_worker_id:
+        worker = db.query(UserDB).filter(UserDB.id == req.assigned_worker_id).first()
+        _log_activity(db, order.id, "worker_assigned",
+                      f"Assigned to {worker.name if worker else 'worker'}",
+                      new_value=str(req.assigned_worker_id),
+                      performed_by=current_user["user_id"],
+                      performer_name=user.name if user else "Admin")
+    db.commit()
 
     _notify_workers_new_order(order, db)
 
@@ -672,6 +786,52 @@ def get_order(
 
 
 # ════════════════════════════════════════════════════════════
+#  ORDER TIMELINE / ACTIVITY LOG
+# ════════════════════════════════════════════════════════════
+
+@router.get("/{order_id}/timeline")
+def get_order_timeline(
+    order_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(_get_db),
+):
+    """
+    Get the activity timeline for an order.
+    Returns all events in chronological order (oldest first).
+    """
+    order = db.query(OrderDB).filter(OrderDB.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    if user.role == "worker" and order.assigned_worker_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your order")
+
+    activities = (
+        db.query(OrderActivityDB)
+        .filter(OrderActivityDB.order_id == order_id)
+        .order_by(OrderActivityDB.created_at.asc())
+        .all()
+    )
+
+    return {
+        "order_id": order_id,
+        "timeline": [
+            {
+                "id": a.id,
+                "event_type": a.event_type,
+                "description": a.description,
+                "old_value": a.old_value,
+                "new_value": a.new_value,
+                "performer_name": a.performer_name,
+                "created_at": (a.created_at.isoformat() + "Z") if a.created_at else None,
+            }
+            for a in activities
+        ],
+    }
+
+
+# ════════════════════════════════════════════════════════════
 #  ASSIGN order to worker (admin)
 # ════════════════════════════════════════════════════════════
 
@@ -696,6 +856,13 @@ def assign_order(
 
     order.assigned_worker_id = worker.id
     order.assigned_at = datetime.utcnow()
+
+    admin_user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    _log_activity(db, order_id, "worker_assigned",
+                  f"Assigned to {worker.name}",
+                  new_value=str(worker.id),
+                  performed_by=current_user["user_id"],
+                  performer_name=admin_user.name if admin_user else "Admin")
     db.commit()
 
     _notify_workers_new_order(order, db)
@@ -743,6 +910,7 @@ def update_order_status(
             )
 
     old_status = order.status
+    old_payment = order.payment_status
     order.status = req.status
 
     if req.worker_notes:
@@ -760,6 +928,19 @@ def update_order_status(
         _deduct_inventory(order, db)
 
     order.updated_at = now
+
+    # ── Log timeline events ──
+    if old_status != req.status:
+        _log_activity(db, order_id, "status_changed",
+                      f"Status changed: {old_status} → {req.status}",
+                      old_value=old_status, new_value=req.status,
+                      performed_by=user.id, performer_name=user.name)
+    if req.payment_status is not None and old_payment != req.payment_status:
+        _log_activity(db, order_id, "payment_changed",
+                      f"Payment: {old_payment or 'unpaid'} → {req.payment_status}",
+                      old_value=old_payment or "unpaid", new_value=req.payment_status,
+                      performed_by=user.id, performer_name=user.name)
+
     db.commit()
 
     logger.info(f"📋 Order #{order.id} status: {old_status} → {req.status}")
@@ -787,6 +968,11 @@ def edit_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    # Track changes for timeline
+    old_payment = order.payment_status
+    old_worker_id = order.assigned_worker_id
+    changed_fields = []
+
     for field in [
         "customer_name", "customer_phone", "customer_email",
         "district_name", "city", "number_of_cars", "dashcam_type",
@@ -795,12 +981,33 @@ def edit_order(
     ]:
         value = getattr(req, field, None)
         if value is not None:
+            old_val = getattr(order, field)
+            if str(old_val) != str(value):
+                changed_fields.append(field)
             setattr(order, field, value)
 
     if req.assigned_worker_id is not None and not order.assigned_at:
         order.assigned_at = datetime.utcnow()
 
     order.updated_at = datetime.utcnow()
+
+    # ── Log timeline events ──
+    if changed_fields:
+        _log_activity(db, order_id, "order_updated",
+                      f"Order edited ({', '.join(changed_fields)})",
+                      performed_by=user.id, performer_name=user.name)
+    if req.payment_status is not None and old_payment != req.payment_status:
+        _log_activity(db, order_id, "payment_changed",
+                      f"Payment: {old_payment or 'unpaid'} → {req.payment_status}",
+                      old_value=old_payment or "unpaid", new_value=req.payment_status,
+                      performed_by=user.id, performer_name=user.name)
+    if req.assigned_worker_id is not None and old_worker_id != req.assigned_worker_id:
+        worker = db.query(UserDB).filter(UserDB.id == req.assigned_worker_id).first()
+        _log_activity(db, order_id, "worker_assigned",
+                      f"Assigned to {worker.name if worker else 'worker'}",
+                      new_value=str(req.assigned_worker_id),
+                      performed_by=user.id, performer_name=user.name)
+
     db.commit()
 
     logger.info(f"📝 Order #{order.id} edited by admin {user.name}")
@@ -834,8 +1041,9 @@ def delete_order(
     elif not user.is_admin and user.role not in ("admin", "worker"):
         raise HTTPException(status_code=403, detail="Not authorised")
 
-    # Delete associated photos first
+    # Delete associated data first
     db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).delete()
+    db.query(OrderActivityDB).filter(OrderActivityDB.order_id == order_id).delete()
 
     # Delete the order
     db.delete(order)
@@ -873,6 +1081,12 @@ def add_order_photo(
         uploaded_by=current_user["user_id"],
     )
     db.add(photo)
+
+    user = db.query(UserDB).filter(UserDB.id == current_user["user_id"]).first()
+    _log_activity(db, order_id, "photo_added",
+                  f"Photo added ({req.photo_type or 'photo'})",
+                  performed_by=current_user["user_id"],
+                  performer_name=user.name if user else "User")
     db.commit()
     db.refresh(photo)
 

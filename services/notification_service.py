@@ -151,7 +151,6 @@ class NotificationService:
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(
                             sound="default",
-                            badge=1,
                         )
                     )
                 ),
@@ -311,7 +310,6 @@ class NotificationService:
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(
                             sound="default",
-                            badge=1,
                         )
                     )
                 ),

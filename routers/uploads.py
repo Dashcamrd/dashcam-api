@@ -7,6 +7,7 @@ from services.auth_service import get_current_user
 from typing import Optional
 import cloudinary
 import cloudinary.uploader
+import cloudinary.utils
 import logging
 import os
 import base64
@@ -49,11 +50,11 @@ def upload_photo(
     """
     Upload an order completion photo to Cloudinary.
     Returns the secure URL for the uploaded image.
+    Always converts to JPEG for universal compatibility (HEIC, PNG, WebP → JPEG).
     """
     try:
-        # Build the data URI for Cloudinary upload
-        # Try to detect image type from base64 or filename
-        ext = "jpg"
+        # Detect source format for proper data URI
+        ext = "jpeg"
         if req.filename:
             lower_name = req.filename.lower()
             if lower_name.endswith(".png"):
@@ -65,15 +66,15 @@ def upload_photo(
 
         data_uri = f"data:image/{ext};base64,{req.image_base64}"
 
-        # Upload to Cloudinary
+        # Upload to Cloudinary — force JPEG output for universal compatibility
+        # This handles HEIC (iPhone), PNG, WebP → always serves JPEG
         result = cloudinary.uploader.upload(
             data_uri,
             folder=f"dashcam_orders/order_{req.order_id}",
             public_id=f"{req.photo_type or 'photo'}_{current_user['user_id']}_{int(__import__('time').time())}",
             resource_type="image",
-            transformation=[
-                {"quality": "auto:good", "fetch_format": "auto"},
-            ],
+            format="jpg",            # Convert to JPEG on storage
+            quality="auto:good",     # Smart quality compression
         )
 
         secure_url = result.get("secure_url", "")

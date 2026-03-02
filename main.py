@@ -17,7 +17,7 @@ from models.device_db import DeviceDB
 from models.user_db import UserDB
 from models.device_cache_db import DeviceCacheDB, AlarmDB  # New cache models
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB  # Push notification models
-from models.order_db import OrderDB, OrderPhotoDB  # OMS models
+from models.order_db import OrderDB, OrderPhotoDB, OrderActivityDB  # OMS models
 from models.inventory_db import ProductDB, WorkerInventoryDB, InventoryTransactionDB  # Inventory models
 from services.device_auto_config_service import device_auto_config  # Auto-configuration service
 

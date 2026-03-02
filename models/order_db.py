@@ -2,6 +2,7 @@
 Order Management Models
 - Orders from Rekaz webhook or manual entry
 - Completion photos uploaded by workers
+- Activity timeline for tracking order events
 """
 from sqlalchemy import Column, String, Integer, DateTime, Float, ForeignKey, Text
 from database import Base
@@ -67,5 +68,24 @@ class OrderPhotoDB(Base):
     photo_url = Column(String(500), nullable=False)
     photo_type = Column(String(50), nullable=True)      # "before", "after", "receipt"
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OrderActivityDB(Base):
+    """
+    Activity timeline for orders — tracks every significant event.
+    Events: order_created, status_changed, payment_changed,
+            order_updated, photo_added, worker_assigned
+    """
+    __tablename__ = "order_activities"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False)      # e.g. "status_changed"
+    description = Column(String(500), nullable=False)     # Human-readable description
+    old_value = Column(String(200), nullable=True)        # Previous value (for changes)
+    new_value = Column(String(200), nullable=True)        # New value (for changes)
+    performed_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Who did it
+    performer_name = Column(String(200), nullable=True)   # Cached name for display
     created_at = Column(DateTime, default=datetime.utcnow)
 
