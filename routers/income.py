@@ -19,6 +19,10 @@ router = APIRouter(prefix="/income", tags=["Income"])
 
 RATE_PER_CAR = 100.0  # SAR per installed car
 
+# Convert UTC stored timestamps to Saudi local time (UTC+3) for correct month/day grouping
+# Without this, orders completed between 12:00-2:59 AM Saudi time get counted in the wrong month
+_saudi_updated_at = func.timezone('Asia/Riyadh', func.timezone('UTC', OrderDB.updated_at))
+
 
 # ════════════════════════════════════════════════════════════
 #  Pydantic schemas
@@ -73,10 +77,10 @@ def get_income_summary(
     now = datetime.utcnow()
     target_year = year or now.year
 
-    # Build query
+    # Build query — use Saudi timezone for correct month/day boundaries
     query = db.query(OrderDB).filter(
         OrderDB.status == "completed",
-        extract('year', OrderDB.updated_at) == target_year,
+        extract('year', _saudi_updated_at) == target_year,
     )
 
     # Filter by worker (None = all workers)
@@ -85,7 +89,7 @@ def get_income_summary(
 
     # Filter by month only if provided (omitted = full year)
     if month is not None:
-        query = query.filter(extract('month', OrderDB.updated_at) == month)
+        query = query.filter(extract('month', _saudi_updated_at) == month)
 
     completed_orders = query.all()
 
@@ -143,22 +147,23 @@ def get_income_chart(
     target_year = year or now.year
 
     if period == "year":
-        # Monthly aggregation for the year
+        # Monthly aggregation for the year — use Saudi timezone
+        saudi_month = extract('month', _saudi_updated_at)
         base_query = db.query(
-            extract('month', OrderDB.updated_at).label('period'),
+            saudi_month.label('period'),
             func.sum(OrderDB.number_of_cars).label('cars'),
             func.count(OrderDB.id).label('orders'),
         ).filter(
             OrderDB.status == "completed",
-            extract('year', OrderDB.updated_at) == target_year,
+            extract('year', _saudi_updated_at) == target_year,
         )
         if target_worker_id is not None:
             base_query = base_query.filter(OrderDB.assigned_worker_id == target_worker_id)
 
         results = base_query.group_by(
-            extract('month', OrderDB.updated_at)
+            saudi_month
         ).order_by(
-            extract('month', OrderDB.updated_at)
+            saudi_month
         ).all()
 
         data_points = []
@@ -182,22 +187,24 @@ def get_income_chart(
         import calendar
         days_in_month = calendar.monthrange(target_year, target_month)[1]
 
+        # Use Saudi timezone for correct day boundaries
+        saudi_day = extract('day', _saudi_updated_at)
         base_query = db.query(
-            extract('day', OrderDB.updated_at).label('period'),
+            saudi_day.label('period'),
             func.sum(OrderDB.number_of_cars).label('cars'),
             func.count(OrderDB.id).label('orders'),
         ).filter(
             OrderDB.status == "completed",
-            extract('month', OrderDB.updated_at) == target_month,
-            extract('year', OrderDB.updated_at) == target_year,
+            extract('month', _saudi_updated_at) == target_month,
+            extract('year', _saudi_updated_at) == target_year,
         )
         if target_worker_id is not None:
             base_query = base_query.filter(OrderDB.assigned_worker_id == target_worker_id)
 
         results = base_query.group_by(
-            extract('day', OrderDB.updated_at)
+            saudi_day
         ).order_by(
-            extract('day', OrderDB.updated_at)
+            saudi_day
         ).all()
 
         data_points = []
