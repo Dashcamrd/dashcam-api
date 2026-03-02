@@ -3,6 +3,7 @@ Inventory Management Models
 - Products catalog (RASD 1.0, RASD 2.0, etc.)
 - Per-worker inventory tracking
 - Transaction audit log
+- Worker payment transactions
 """
 from sqlalchemy import Column, String, Integer, DateTime, Float, ForeignKey, Text, UniqueConstraint
 from database import Base
@@ -48,5 +49,22 @@ class InventoryTransactionDB(Base):
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     notes = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class WorkerPaymentDB(Base):
+    """
+    Manual payment records from company to worker.
+    Admin records when money is transferred to a worker.
+    """
+    __tablename__ = "worker_payments"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    worker_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)              # Amount in SAR
+    description = Column(String(500), nullable=True)    # e.g. "January salary transfer"
+    payment_date = Column(DateTime, nullable=False)     # When the payment was made
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # Admin who added it
+    created_by_name = Column(String(200), nullable=True)  # Cached admin name
     created_at = Column(DateTime, default=datetime.utcnow)
 

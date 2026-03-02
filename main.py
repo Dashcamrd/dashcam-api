@@ -11,14 +11,14 @@ logging.basicConfig(
 )
 
 from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding, notifications
-from routers import orders, inventory, worker_auth, uploads  # OMS
+from routers import orders, inventory, worker_auth, uploads, income  # OMS
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
 from models.device_cache_db import DeviceCacheDB, AlarmDB  # New cache models
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB  # Push notification models
 from models.order_db import OrderDB, OrderPhotoDB, OrderActivityDB  # OMS models
-from models.inventory_db import ProductDB, WorkerInventoryDB, InventoryTransactionDB  # Inventory models
+from models.inventory_db import ProductDB, WorkerInventoryDB, InventoryTransactionDB, WorkerPaymentDB  # Inventory models
 from services.device_auto_config_service import device_auto_config  # Auto-configuration service
 
 # Create all tables (with error handling for connection issues)
@@ -89,6 +89,7 @@ app.include_router(orders.router)       # Order Management System
 app.include_router(inventory.router)    # Inventory management
 app.include_router(worker_auth.router)  # Worker authentication
 app.include_router(uploads.router)      # Photo uploads (Cloudinary)
+app.include_router(income.router)      # Worker income tracking
 
 @app.get("/")
 def root():
