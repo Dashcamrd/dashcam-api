@@ -74,6 +74,7 @@ class EditOrderRequest(BaseModel):
     total_amount: Optional[float] = None
     discount: Optional[float] = None
     assigned_worker_id: Optional[int] = None
+    updated_at: Optional[str] = None  # ISO 8601 string, admin can override last update
 
 
 # ════════════════════════════════════════════════════════════
@@ -989,7 +990,18 @@ def edit_order(
     if req.assigned_worker_id is not None and not order.assigned_at:
         order.assigned_at = datetime.utcnow()
 
-    order.updated_at = datetime.utcnow()
+    # Allow admin to override updated_at; otherwise auto-set
+    if req.updated_at is not None:
+        try:
+            # Accept ISO 8601 string (e.g. "2026-02-15T14:30:00Z" or "2026-02-15T14:30:00")
+            parsed = req.updated_at.replace("Z", "+00:00")
+            order.updated_at = datetime.fromisoformat(parsed).replace(tzinfo=None)
+            if "updated_at" not in changed_fields:
+                changed_fields.append("updated_at")
+        except (ValueError, TypeError):
+            order.updated_at = datetime.utcnow()
+    else:
+        order.updated_at = datetime.utcnow()
 
     # ── Log timeline events ──
     if changed_fields:
