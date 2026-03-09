@@ -526,8 +526,9 @@ def remove_device_from_user(
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
         
-        # Check if device belongs to current user
-        if device.assigned_user_id != user_id:
+        # Check if device belongs to current user (admin can remove any device)
+        is_admin = current_user.get("is_admin", False)
+        if device.assigned_user_id != user_id and not is_admin:
             raise HTTPException(status_code=403, detail="You don't have permission to remove this device")
         
         # Unassign device from user
