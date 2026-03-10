@@ -531,14 +531,20 @@ def remove_device_from_user(
         if device.assigned_user_id != user_id and not is_admin:
             raise HTTPException(status_code=403, detail="You don't have permission to remove this device")
         
-        # Unassign device from user
-        device.assigned_user_id = None
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": f"Device {device_id} has been removed from your account"
-        }
+        if is_admin:
+            db.delete(device)
+            db.commit()
+            return {
+                "success": True,
+                "message": f"Device {device_id} has been permanently deleted"
+            }
+        else:
+            device.assigned_user_id = None
+            db.commit()
+            return {
+                "success": True,
+                "message": f"Device {device_id} has been removed from your account"
+            }
     except HTTPException:
         raise
     except Exception as e:
