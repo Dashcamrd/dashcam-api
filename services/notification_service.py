@@ -48,8 +48,8 @@ def initialize_firebase():
             logger.info("✅ Firebase initialized from FIREBASE_CREDENTIALS_JSON")
             return True
         
-        # Try file path
-        creds_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+        # Try file path (FIREBASE_CREDENTIALS_PATH or GOOGLE_APPLICATION_CREDENTIALS)
+        creds_path = os.getenv("FIREBASE_CREDENTIALS_PATH") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         if creds_path and os.path.exists(creds_path):
             cred = credentials.Certificate(creds_path)
             firebase_admin.initialize_app(cred)
