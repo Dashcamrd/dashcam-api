@@ -201,3 +201,27 @@ def delete_account(current_user: dict = Depends(auth_service.get_current_user)):
     This action cannot be undone. All user data will be deleted.
     """
     return auth_service.delete_user_account(current_user["user_id"])
+
+@router.delete("/account/by-device/{device_id}")
+def admin_delete_account_by_device(
+    device_id: str,
+    current_user: dict = Depends(auth_service.get_current_user)
+):
+    """
+    Admin-only: delete the account that owns a specific device.
+    """
+    if not current_user.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from database import SessionLocal
+    from models.device_db import DeviceDB
+    db = SessionLocal()
+    try:
+        device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        if not device.assigned_user_id:
+            raise HTTPException(status_code=404, detail="No user assigned to this device")
+        return auth_service.delete_user_account(device.assigned_user_id, db=db)
+    finally:
+        db.close()

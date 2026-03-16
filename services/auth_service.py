@@ -433,16 +433,15 @@ def delete_user_account(user_id: int, db: Session = None):
             {OrderActivityDB.performed_by: None}, synchronize_session=False
         )
 
-        # Nullify references in inventory / payments (preserve records)
+        # Nullify nullable references in inventory
         db.query(InventoryTransactionDB).filter(
             InventoryTransactionDB.created_by == user_id
         ).update({InventoryTransactionDB.created_by: None}, synchronize_session=False)
-        db.query(ManualCarsDB).filter(ManualCarsDB.created_by == user_id).update(
-            {ManualCarsDB.created_by: None}, synchronize_session=False
-        )
-        db.query(WorkerPaymentDB).filter(WorkerPaymentDB.created_by == user_id).update(
-            {WorkerPaymentDB.created_by: None}, synchronize_session=False
-        )
+
+        # Delete records where user is referenced by NOT NULL columns
+        # (manual_cars.created_by and worker_payments.created_by are NOT NULL)
+        db.query(ManualCarsDB).filter(ManualCarsDB.created_by == user_id).delete(synchronize_session=False)
+        db.query(WorkerPaymentDB).filter(WorkerPaymentDB.created_by == user_id).delete(synchronize_session=False)
 
         # Delete worker-specific owned data
         db.query(WorkerInventoryDB).filter(WorkerInventoryDB.worker_id == user_id).delete(synchronize_session=False)
