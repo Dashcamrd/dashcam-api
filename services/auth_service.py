@@ -9,7 +9,10 @@ from models.user_db import UserDB
 from models.user import UserCreate, UserLogin
 from models.fcm_token_db import UserNotificationSettingsDB
 import os
+import logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -399,27 +402,65 @@ def delete_user_account(user_id: int, db: Session = None):
         close_db = False
     
     try:
-        # Get user
         db_user = db.query(UserDB).filter(UserDB.id == user_id).first()
         if not db_user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Unlink devices from user (set assigned_user_id to None)
         from models.device_db import DeviceDB
-        devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).all()
-        for device in devices:
-            device.assigned_user_id = None
-        db.commit()
-        
+        from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB
+        from models.order_db import OrderDB, OrderPhotoDB, OrderActivityDB
+        from models.inventory_db import WorkerInventoryDB, InventoryTransactionDB, ManualCarsDB, WorkerPaymentDB
+
+        # Unlink devices
+        db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user_id).update(
+            {DeviceDB.assigned_user_id: None}, synchronize_session=False
+        )
+
+        # Delete user-owned records
+        db.query(FCMTokenDB).filter(FCMTokenDB.user_id == user_id).delete(synchronize_session=False)
+        db.query(UserNotificationSettingsDB).filter(
+            UserNotificationSettingsDB.user_id == user_id
+        ).delete(synchronize_session=False)
+
+        # Nullify references in orders / history (preserve historical data)
+        db.query(OrderDB).filter(OrderDB.assigned_worker_id == user_id).update(
+            {OrderDB.assigned_worker_id: None}, synchronize_session=False
+        )
+        db.query(OrderPhotoDB).filter(OrderPhotoDB.uploaded_by == user_id).update(
+            {OrderPhotoDB.uploaded_by: None}, synchronize_session=False
+        )
+        db.query(OrderActivityDB).filter(OrderActivityDB.performed_by == user_id).update(
+            {OrderActivityDB.performed_by: None}, synchronize_session=False
+        )
+
+        # Nullify references in inventory / payments (preserve records)
+        db.query(InventoryTransactionDB).filter(
+            InventoryTransactionDB.created_by == user_id
+        ).update({InventoryTransactionDB.created_by: None}, synchronize_session=False)
+        db.query(ManualCarsDB).filter(ManualCarsDB.created_by == user_id).update(
+            {ManualCarsDB.created_by: None}, synchronize_session=False
+        )
+        db.query(WorkerPaymentDB).filter(WorkerPaymentDB.created_by == user_id).update(
+            {WorkerPaymentDB.created_by: None}, synchronize_session=False
+        )
+
+        # Delete worker-specific owned data
+        db.query(WorkerInventoryDB).filter(WorkerInventoryDB.worker_id == user_id).delete(synchronize_session=False)
+        db.query(InventoryTransactionDB).filter(InventoryTransactionDB.worker_id == user_id).delete(synchronize_session=False)
+        db.query(ManualCarsDB).filter(ManualCarsDB.worker_id == user_id).delete(synchronize_session=False)
+        db.query(WorkerPaymentDB).filter(WorkerPaymentDB.worker_id == user_id).delete(synchronize_session=False)
+
         # Delete user
         db.delete(db_user)
         db.commit()
         
+        logger.info(f"Account deleted for user_id={user_id}")
         return {"message": "Account deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
+        logger.error(f"Error deleting account for user_id={user_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting account: {str(e)}")
     finally:
         if close_db:

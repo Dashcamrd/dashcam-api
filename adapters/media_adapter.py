@@ -128,14 +128,14 @@ class MediaAdapter(BaseAdapter):
         
         Args:
             device_id: Device ID
-            channels: List of channels to close (default: [1])
+            channels: List of channels to close (default: all 3 channels)
         
         Returns:
             Request dictionary
         """
         return {
             "deviceId": device_id,
-            "channels": channels or [1]
+            "channels": channels or [1, 2, 3]
         }
     
     @staticmethod

@@ -21,7 +21,7 @@ router = APIRouter(prefix="/media", tags=["Media"])
 class PreviewRequest(BaseModel):
     device_id: str
     channel: Optional[int] = 1
-    stream: Optional[int] = 1  # 1=main stream, 2=sub stream
+    stream: Optional[int] = 0  # 0=main stream, 1=sub stream
     play_format: Optional[int] = 0  # 0=WebSocket, 2=WebRTC
 
 class PlaybackRequest(BaseModel):
