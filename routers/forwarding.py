@@ -466,6 +466,36 @@ def _check_speed_limit(db: Session, device_id: str, actual_speed_kmh: float, lat
     db.commit()
 
 
+def _create_acc_alarm(db: Session, device_id: str, acc_on: bool, lat=None, lng=None, speed_kmh=None):
+    """
+    Create an alarm record for ACC status change so it appears in the alarms screen.
+    Uses alarm_type 999002 for ACC ON and 999003 for ACC OFF.
+    """
+    device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+    device_name = device.name if device else device_id
+
+    alarm_type_id = 999002 if acc_on else 999003
+    alarm_name = "ACC ON - Engine Started" if acc_on else "ACC OFF - Engine Stopped"
+
+    new_alarm = AlarmDB(
+        device_id=device_id,
+        alarm_type=alarm_type_id,
+        alarm_type_name=alarm_name,
+        alarm_level=1,
+        latitude=lat,
+        longitude=lng,
+        speed=speed_kmh,
+        alarm_time=datetime.utcnow(),
+        alarm_data=json.dumps({
+            "type": "acc_change",
+            "acc_status": "on" if acc_on else "off",
+            "device_name": device_name
+        })
+    )
+    db.add(new_alarm)
+    logger.info(f"📋 ACC alarm record created for {device_id}: {'ON' if acc_on else 'OFF'}")
+
+
 async def handle_gps_data(db: Session, data: dict):
     """
     Process forwarded GPS data.
@@ -574,9 +604,10 @@ async def handle_gps_data(db: Session, data: dict):
             )
             db.add(new_cache)
         
-        # Send push notification if ACC status changed
+        # Send push notification and create alarm record if ACC status changed
         if previous_acc_status is not None and previous_acc_status != acc_status:
             try:
+                _create_acc_alarm(db, device_id, acc_status, lat, lng, speed / 10.0 if speed else None)
                 NotificationService.send_acc_notification(
                     db=db,
                     device_id=device_id,
@@ -651,9 +682,16 @@ async def handle_device_status(db: Session, data: dict):
     
     db.commit()
     
-    # Send push notification if ACC status changed
+    # Send push notification and create alarm record if ACC status changed
     if acc_status is not None and previous_acc_status is not None and previous_acc_status != acc_status:
         try:
+            cache = existing or db.query(DeviceCacheDB).filter(DeviceCacheDB.device_id == device_id).first()
+            _create_acc_alarm(
+                db, device_id, acc_status,
+                cache.latitude if cache else None,
+                cache.longitude if cache else None,
+                (cache.speed / 10.0) if cache and cache.speed else None
+            )
             NotificationService.send_acc_notification(
                 db=db,
                 device_id=device_id,
