@@ -30,6 +30,10 @@ env/
 .env
 .env.local
 .env.production
+.env.db
+
+# Firebase credentials
+firebase-credentials.json
 
 # IDE
 .vscode/
