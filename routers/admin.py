@@ -45,9 +45,7 @@ class ManualConfigRequest(BaseModel):
 
 def is_admin_user(current_user: dict) -> bool:
     """Check if current user has admin privileges"""
-    # For now, simple check - in production you'd have role-based access
-    # You can implement role checking based on your business logic
-    return True  # Placeholder - implement proper admin role checking
+    return current_user.get("is_admin", False) or current_user.get("role") == "admin"
 
 
 # ==================== AUTO-CONFIGURATION MANAGEMENT ====================
@@ -176,6 +174,31 @@ def reset_all_device_configs(current_user: dict = Depends(get_current_user)):
 
 # ==================== USER MANAGEMENT ====================
 
+def _serialize_user(user: UserDB, db) -> dict:
+    """Build a full user dict including assigned devices."""
+    devices = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user.id).all()
+    return {
+        "id": user.id,
+        "invoice_no": user.invoice_no,
+        "name": user.name,
+        "email": user.email,
+        "phone": user.phone,
+        "role": user.role,
+        "is_admin": user.is_admin,
+        "city": user.city,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "device_count": len(devices),
+        "devices": [
+            {
+                "device_id": d.device_id,
+                "name": d.name,
+                "status": d.status,
+            }
+            for d in devices
+        ],
+    }
+
+
 @router.post("/users", response_model=UserResponse)
 def create_new_user(
     user_data: UserCreate,
@@ -206,121 +229,150 @@ def create_new_user(
 @router.get("/users")
 def list_all_users(
     current_user: dict = Depends(get_current_user),
-    page: int = Query(1, description="Page number"),
-    page_size: int = Query(20, description="Items per page")
+    search: Optional[str] = Query(None, description="Search by name, email, phone, or invoice number"),
+    role: Optional[str] = Query(None, description="Filter by role: user, worker, admin"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
 ):
     """
-    List all users in the system (admin only).
+    List / search all users (admin only).
+
+    Search matches against name, email, phone, and invoice_no.
+    Accessible from any browser at /api/admin/users?search=0505442662
     """
     if not is_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
-    
+
     db = SessionLocal()
     try:
-        offset = (page - 1) * page_size
-        users = db.query(UserDB).offset(offset).limit(page_size).all()
-        total = db.query(UserDB).count()
-        
-        user_list = []
-        for user in users:
-            # Get device count for each user
-            device_count = db.query(DeviceDB).filter(DeviceDB.assigned_user_id == user.id).count()
-            
-            user_list.append({
-                "id": user.id,
-                "invoice_no": user.invoice_no,
-                "name": user.name,
-                "email": user.email,
-                "created_at": user.created_at.isoformat() if user.created_at else None,
-                "device_count": device_count
-            })
-        
+        query = db.query(UserDB)
+
+        if search:
+            term = f"%{search}%"
+            query = query.filter(
+                (UserDB.name.ilike(term))
+                | (UserDB.email.ilike(term))
+                | (UserDB.phone.ilike(term))
+                | (UserDB.invoice_no.ilike(term))
+            )
+
+        if role:
+            query = query.filter(UserDB.role == role)
+
+        total = query.count()
+        users = query.order_by(UserDB.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
         return {
             "success": True,
-            "users": user_list,
+            "users": [_serialize_user(u, db) for u in users],
             "pagination": {
                 "page": page,
                 "page_size": page_size,
                 "total": total,
-                "total_pages": (total + page_size - 1) // page_size
-            }
+                "total_pages": (total + page_size - 1) // page_size,
+            },
         }
     finally:
         db.close()
 
+
+@router.get("/users/{user_id}")
+def get_user_detail(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get full details for a single user by ID (admin only)."""
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    db = SessionLocal()
+    try:
+        user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"success": True, "user": _serialize_user(user, db)}
+    finally:
+        db.close()
+
+
 @router.post("/users/{user_id}/reset-password")
 def reset_user_password(
     user_id: int,
-    new_password: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    new_password: Optional[str] = Query(None, description="Custom password. If omitted a random one is generated."),
 ):
     """
-    Reset a user password by user ID (admin only).
+    Reset a user's password (admin only).
+
+    If no new_password is provided, a random 10-char password is generated
+    and returned in the response so the admin can share it with the user.
     """
     if not is_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
-    
+
+    import secrets, string
+    from services.auth_service import hash_password
+
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         user = db.query(UserDB).filter(UserDB.id == user_id).first()
-        
         if not user:
-            db.close()
             raise HTTPException(status_code=404, detail="User not found")
-        
-        # Hash the new password
-        from services.auth_service import hash_password
-        user.password_hash = hash_password(new_password)
-        db.add(user)
+
+        password = new_password or "".join(
+            secrets.choice(string.ascii_letters + string.digits) for _ in range(10)
+        )
+        user.password_hash = hash_password(password)
         db.commit()
-        db.close()
-        
+
         return {
             "success": True,
-            "message": f"Password reset successfully for user {user.name}",
-            "user_id": user_id,
-            "invoice_no": user.invoice_no
+            "message": f"Password reset for {user.name}",
+            "user_id": user.id,
+            "invoice_no": user.invoice_no,
+            "temporary_password": password,
         }
-    except Exception as e:
+    finally:
         db.close()
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
 
 @router.post("/users/reset-password-by-invoice")
 def reset_password_by_invoice(
     invoice_no: str,
-    new_password: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    new_password: Optional[str] = Query(None, description="Custom password. If omitted a random one is generated."),
 ):
     """
     Reset password by invoice number (admin only).
+    Returns the new password so admin can share it with the user.
     """
     if not is_admin_user(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
-    
+
+    import secrets, string
+    from services.auth_service import hash_password
+
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         user = db.query(UserDB).filter(UserDB.invoice_no == invoice_no).first()
-        
         if not user:
-            db.close()
             raise HTTPException(status_code=404, detail="User not found")
-        
-        # Hash the new password
-        from services.auth_service import hash_password
-        user.password_hash = hash_password(new_password)
-        db.add(user)
+
+        password = new_password or "".join(
+            secrets.choice(string.ascii_letters + string.digits) for _ in range(10)
+        )
+        user.password_hash = hash_password(password)
         db.commit()
-        db.close()
-        
+
         return {
             "success": True,
-            "message": f"Password reset successfully for user {user.name}",
+            "message": f"Password reset for {user.name}",
             "user_id": user.id,
-            "invoice_no": user.invoice_no
+            "invoice_no": user.invoice_no,
+            "temporary_password": password,
         }
-    except Exception as e:
+    finally:
         db.close()
-        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
 
 
 # ==================== DEVICE MANAGEMENT ====================
