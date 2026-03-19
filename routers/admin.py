@@ -336,6 +336,39 @@ def reset_user_password(
         db.close()
 
 
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Delete a user account and all associated data (admin only).
+    Prevents admins from deleting their own account through this endpoint.
+    """
+    if not is_admin_user(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    if current_user.get("user_id") == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+
+    from services.auth_service import delete_user_account
+
+    db = SessionLocal()
+    try:
+        user = db.query(UserDB).filter(UserDB.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user_name = user.name
+        result = delete_user_account(user_id, db)
+        return {
+            "success": True,
+            "message": f"User '{user_name}' has been deleted",
+        }
+    finally:
+        db.close()
+
+
 @router.post("/users/reset-password-by-invoice")
 def reset_password_by_invoice(
     invoice_no: str,
