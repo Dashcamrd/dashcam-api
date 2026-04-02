@@ -25,7 +25,6 @@ from database import SessionLocal
 from models.device_cache_db import DeviceCacheDB, AlarmDB
 from models.device_db import DeviceDB
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB
-from services.geocoding_service import GeocodingService
 from services.notification_service import NotificationService
 
 router = APIRouter(prefix="/api/forwarding", tags=["Data Forwarding"])
@@ -559,14 +558,6 @@ async def handle_gps_data(db: Session, data: dict):
                 except:
                     pass
         
-        # Get geocoded address (optional, can be slow)
-        address = None
-        if lat and lng:
-            try:
-                address = GeocodingService.get_location_name(lat, lng)
-            except:
-                pass  # Don't fail on geocoding errors
-        
         # Upsert device cache
         existing = db.query(DeviceCacheDB).filter(
             DeviceCacheDB.device_id == device_id
@@ -583,9 +574,8 @@ async def handle_gps_data(db: Session, data: dict):
             existing.direction = direction
             existing.altitude = altitude
             existing.gps_time = gps_time
-            existing.address = address
-            existing.acc_status = acc_status  # Update ACC from GPS data
-            existing.is_online = True  # Device sending GPS = online
+            existing.acc_status = acc_status
+            existing.is_online = True
             existing.last_online_time = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
         else:
@@ -597,7 +587,6 @@ async def handle_gps_data(db: Session, data: dict):
                 direction=direction,
                 altitude=altitude,
                 gps_time=gps_time,
-                address=address,
                 acc_status=acc_status,
                 is_online=True,
                 last_online_time=datetime.utcnow()
