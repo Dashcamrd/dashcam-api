@@ -7,6 +7,7 @@ from services.manufacturer_api_service import manufacturer_api
 from typing import Optional, List
 from pydantic import BaseModel
 import logging
+import re
 import uuid
 from adapters import TaskAdapter
 
@@ -29,6 +30,11 @@ class SendTextRequest(BaseModel):
     device_id: str
     text: str
     sender_name: Optional[str] = None
+
+class ChangeWifiPasswordRequest(BaseModel):
+    device_id: str
+    new_password: str
+    ssid: Optional[str] = "TLAP"
 
 def verify_device_access(device_id: str, current_user: dict) -> bool:
     """Verify that the current user has access to the specified device"""
@@ -336,6 +342,68 @@ def send_text_message(
         raise HTTPException(
             status_code=400, 
             detail=f"Failed to send text: {result.get('message', 'Unknown error')}"
+        )
+
+
+
+def _encode_wifi_string(text: str) -> str:
+    """Encode a string to 3-digit ASCII decimal format for $WIFIAP command."""
+    return "".join(f"{ord(c):03d}" for c in text)
+
+def _build_wifi_command(ssid: str, password: str) -> str:
+    """Build the full $WIFIAP command string."""
+    encoded_ssid = _encode_wifi_string(ssid)
+    encoded_password = _encode_wifi_string(password)
+    return f"$WIFIAP,1,{encoded_ssid},{encoded_password},192168001001,255255255000,008008008008"
+
+@router.post("/wifi-password")
+def change_wifi_password(
+    request: ChangeWifiPasswordRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Change the WiFi hotspot password on a device.
+    Password must be at least 8 English alphanumeric characters.
+    """
+    if not verify_device_access(request.device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    password = request.new_password.strip()
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    if not re.match(r'^[A-Za-z0-9]+$', password):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain only English letters and numbers"
+        )
+
+    ssid = request.ssid or "TLAP"
+    command = _build_wifi_command(ssid, password)
+
+    logger.info(f"Sending WiFi password change to device {request.device_id}")
+
+    text_data = TaskAdapter.build_text_delivery_request(
+        device_ids=[request.device_id],
+        content=command
+    )
+
+    result = manufacturer_api.send_text(text_data)
+
+    if result.get("code") in (200, 0):
+        data = result.get("data", {})
+        return {
+            "success": True,
+            "device_id": request.device_id,
+            "ssid": ssid,
+            "sent_at": TaskAdapter.convert_timestamp_to_ms(data.get("sentAt")) if data.get("sentAt") else None,
+            "message": "WiFi password change command sent successfully"
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to send WiFi command: {result.get('message', 'Unknown error')}"
         )
 
 
