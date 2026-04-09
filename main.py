@@ -23,6 +23,7 @@ from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB  # Push n
 from models.order_db import OrderDB, OrderPhotoDB, OrderActivityDB  # OMS models
 from models.inventory_db import ProductDB, WorkerInventoryDB, InventoryTransactionDB, WorkerPaymentDB, ManualCarsDB  # Inventory models
 from services.device_auto_config_service import device_auto_config  # Auto-configuration service
+from services.vms_sync_service import vms_sync  # Background VMS polling for device_cache freshness
 
 # Create all tables (with error handling for connection issues)
 try:
@@ -43,12 +44,15 @@ async def lifespan(app: FastAPI):
     print("🚀 Starting background services...")
     device_auto_config.start()
     print("✅ Device Auto-Configuration Service started")
+    vms_sync.start()
+    print("✅ VMS Sync Service started")
     
     yield  # App is running
     
     # Shutdown
     print("🛑 Stopping background services...")
     device_auto_config.stop()
+    vms_sync.stop()
     print("✅ Background services stopped")
 
 app = FastAPI(
