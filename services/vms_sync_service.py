@@ -111,6 +111,7 @@ class VMSSyncService:
             self._devices_synced = len(device_ids)
 
             status_count = await self._sync_device_states(db, device_ids)
+            db.flush()  # make new rows visible before GPS phase
             gps_count = await self._sync_gps(db, device_ids)
 
             db.commit()
