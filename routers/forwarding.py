@@ -344,7 +344,7 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
         elif msg_id == 2:  # Alarm Data
             await handle_alarm_data(db, data)
         elif msg_id == 3:  # Device Status (ACC, Online/Offline)
-            await handle_device_status(db, data)
+            await handle_device_status(db, data, extracted_device_id=device_id)
         else:
             # Unknown message type - log and accept
             logger.warning(f"⚠️ Unknown msgId: {msg_id}, data: {json.dumps(data)[:500]}")
@@ -643,18 +643,31 @@ async def handle_gps_data(db: Session, data: dict):
     monitoring.record_forwarding(gps_count=processed_count)
 
 
-async def handle_device_status(db: Session, data: dict):
+async def handle_device_status(db: Session, data: dict, extracted_device_id: str = None):
     """
     Process device status changes (ACC ON/OFF, Online/Offline).
     """
-    device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
+    device_id = extracted_device_id or data.get("deviceId") or data.get("imei") or data.get("device_id")
     if not device_id:
         logger.warning("⚠️ Device status without device_id")
         return
     
-    # Extract status values
+    # Extract status values — search nested structures too
     acc_status = data.get("accStatus") or data.get("acc") or data.get("accState")
     online_status = data.get("online") or data.get("isOnline") or data.get("onlineStatus")
+    
+    # Deep search if not found at top level
+    if acc_status is None or online_status is None:
+        for key, val in data.items():
+            if key == "msgId":
+                continue
+            if isinstance(val, dict):
+                if acc_status is None:
+                    acc_status = val.get("accState") or val.get("accStatus") or val.get("acc")
+                if online_status is None:
+                    online_status = val.get("online") or val.get("isOnline") or val.get("state")
+    
+    logger.info(f"📊 Device status data for {device_id}: acc={acc_status}, online={online_status}, raw_keys={list(data.keys())}")
     
     # Convert to boolean
     if acc_status is not None:
