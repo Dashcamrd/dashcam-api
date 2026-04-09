@@ -92,6 +92,15 @@ class VMSSyncService:
 
     async def _sync_cycle(self):
         start = asyncio.get_event_loop().time()
+
+        # Single auth check — avoids hammering VMS with N login attempts
+        # when the token is invalid (each API call would retry independently).
+        auth_ok = await asyncio.to_thread(manufacturer_api._ensure_valid_token)
+        if not auth_ok:
+            logger.warning("⚠️ VMS sync: auth failed, skipping cycle")
+            self._last_error = "VMS authentication failed"
+            return
+
         db: Session = SessionLocal()
         try:
             device_ids = self._get_assigned_device_ids(db)
