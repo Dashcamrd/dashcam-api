@@ -134,37 +134,33 @@ def get_latest_gps(
         if cache.updated_at:
             cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
         
-        # Use cached data if reasonably recent (< 1800 seconds = 30 minutes)
-        if cache_age_seconds < 1800:
-            logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
-            
-            # Always use cache.updated_at for timestamp (most reliable)
-            timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
-            
-            # Get location name
-            location_name = cache.address
-            if not location_name and cache.latitude and cache.longitude:
-                location_name = GeocodingService.get_location_name(cache.latitude, cache.longitude)
-            
-            return {
-                "success": True,
-                "device_id": device_id,
-                "latitude": cache.latitude,
-                "longitude": cache.longitude,
-                "speed": cache.speed,
-                "direction": cache.direction,
-                "altitude": cache.altitude,
-                "acc_on": cache.acc_status or False,
-                "timestamp_ms": timestamp_ms,
-                "lastOnlineTime": timestamp_ms,
-                "last_online_time_ms": timestamp_ms,
-                "last_online_time": timestamp_ms,
-                "address": location_name,
-                "location_name": location_name,
-                "source": "cache"  # Indicate data source for debugging
-            }
-        else:
-            logger.info(f"[{correlation_id}] ⚠️ Cache stale for {device_id} (age: {cache_age_seconds:.0f}s), falling back to VMS API")
+        # Always return cached data if we have coordinates — stale data is
+        # better than a 30+ second timeout waiting for VMS API
+        logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
+        
+        timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
+        
+        location_name = cache.address
+        if not location_name and cache.latitude and cache.longitude:
+            location_name = GeocodingService.get_location_name(cache.latitude, cache.longitude)
+        
+        return {
+            "success": True,
+            "device_id": device_id,
+            "latitude": cache.latitude,
+            "longitude": cache.longitude,
+            "speed": cache.speed,
+            "direction": cache.direction,
+            "altitude": cache.altitude,
+            "acc_on": cache.acc_status or False,
+            "timestamp_ms": timestamp_ms,
+            "lastOnlineTime": timestamp_ms,
+            "last_online_time_ms": timestamp_ms,
+            "last_online_time": timestamp_ms,
+            "address": location_name,
+            "location_name": location_name,
+            "source": "cache"
+        }
     else:
         logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
     
@@ -459,15 +455,11 @@ def get_user_devices_with_gps_status(
             if cache.updated_at:
                 cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
             
-            # Only trust acc_status and is_online if cache is fresh
-            if cache_age_seconds < 1800:  # Reasonably recent cache (< 30 minutes)
-                acc_status = cache.acc_status or False
-                is_online = cache.is_online or False
-                gps_status = "online" if (latitude is not None and longitude is not None) else "offline"
-            else:  # Stale cache - don't trust status fields
-                acc_status = False  # Show as OFF when data is old
-                is_online = False
-                gps_status = "offline"  # Mark as offline when data is stale
+            # Always use cached status — forwarding keeps this updated via
+            # msgId=3 even when GPS forwarding is broken
+            acc_status = cache.acc_status or False
+            is_online = cache.is_online or False
+            gps_status = "online" if is_online else "offline"
             
             # Get location name from cache or geocode if needed
             if address:
@@ -556,20 +548,17 @@ def get_device_states(
         if cache.updated_at:
             cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
         
-        # Use cached data if reasonably recent (< 1800 seconds = 30 minutes)
-        if cache_age_seconds < 1800:
-            logger.info(f"[{correlation_id}] ✅ Using CACHED states for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
-            
-            return {
-                "success": True,
-                "device_id": device_id,
-                "acc_on": cache.acc_status or False,
-                "acc_status": cache.acc_status or False,
-                "is_online": cache.is_online or False,
-                "source": "cache"
-            }
-        else:
-            logger.info(f"[{correlation_id}] ⚠️ Cache stale for {device_id} (age: {cache_age_seconds:.0f}s), falling back to VMS API")
+        # Always return cached data — stale data is better than timeout
+        logger.info(f"[{correlation_id}] ✅ Using CACHED states for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
+        
+        return {
+            "success": True,
+            "device_id": device_id,
+            "acc_on": cache.acc_status or False,
+            "acc_status": cache.acc_status or False,
+            "is_online": cache.is_online or False,
+            "source": "cache"
+        }
     else:
         logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
     

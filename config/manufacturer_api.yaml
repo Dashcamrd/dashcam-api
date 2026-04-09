@@ -17,6 +17,8 @@ profiles:
       login:
         path: /api/v1/user/login
         method: POST
+        timeout: 10
+        retries: 1
         request:
           required: [username, password, progVersion, platform]
           optional: [model]
