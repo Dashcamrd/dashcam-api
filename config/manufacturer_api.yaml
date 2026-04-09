@@ -57,6 +57,8 @@ profiles:
       device_states:
         path: /api/v1/device/states
         method: POST
+        timeout: 10
+        retries: 1
         request:
           required: [deviceIds]
         response:
@@ -108,6 +110,8 @@ profiles:
       gps_get_latest_v2:
         path: /api/v2/gps/getLatestGPS
         method: POST
+        timeout: 10
+        retries: 1
         request:
           required: [deviceIds]
         response:
@@ -183,52 +187,57 @@ profiles:
         request:
           required: [deviceId, channel]
 
-      # Tasks
+      # Text Delivery Tasks (queued, waits for offline devices up to 14 days)
       task_create:
-        path: /api/v1/task/create
+        path: /api/v1/textDelivery/createTask
         method: POST
         request:
-          required: [deviceIds, content, sendTime]
+          required: [name, content, contentTypes, conditions, status]
+          optional: [scheduleAt, deadline, ignoreLowPower]
 
       task_get_list:
-        path: /api/v1/task/getList
+        path: /api/v1/textDelivery/getTaskList
         method: POST
         request:
           required: [page, pageSize]
-          optional: [deviceId, status, startTime, endTime]
+          optional: [id, name, deviceId, companyId, startTime, endTime, status, operatorName, content]
           defaults:
             page: 1
             pageSize: 10
 
       task_get_details:
-        path: /api/v1/task/getDetails
+        path: /api/v1/textDelivery/getTaskById
         method: POST
         request:
-          required: [taskId]
+          required: [id]
 
       task_update_info:
-        path: /api/v1/task/updateInfo
+        path: /api/v1/textDelivery/updateTaskInfo
         method: POST
         request:
-          required: [taskId]
+          required: [id]
+          optional: [name, content, contentTypes, scheduleAt, deadline]
 
       task_update_status:
-        path: /api/v1/task/updateStatus
+        path: /api/v1/textDelivery/updateTaskStatus
         method: POST
         request:
-          required: [taskId, status]
+          required: [id, status]
 
       task_delete:
-        path: /api/v1/task/delete
+        path: /api/v1/textDelivery/deleteTask
         method: POST
         request:
-          required: [taskIds]
+          required: [id]
 
       task_get_results:
-        path: /api/v1/task/getResults
+        path: /api/v1/textDelivery/getTaskResult
         method: POST
         request:
-          required: [taskId]
+          optional: [page, pageSize, id, name, startTime, endTime, deviceId, type, operatorName, content]
+          defaults:
+            page: 1
+            pageSize: 10
 
       # Text Delivery
       text_delivery_send:

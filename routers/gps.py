@@ -134,8 +134,8 @@ def get_latest_gps(
         if cache.updated_at:
             cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
         
-        # Use cached data if it's fresh (< 300 seconds = 5 minutes)
-        if cache_age_seconds < 300:
+        # Use cached data if reasonably recent (< 1800 seconds = 30 minutes)
+        if cache_age_seconds < 1800:
             logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
             
             # Always use cache.updated_at for timestamp (most reliable)
@@ -460,7 +460,7 @@ def get_user_devices_with_gps_status(
                 cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
             
             # Only trust acc_status and is_online if cache is fresh
-            if cache_age_seconds < 300:  # Fresh cache (< 5 minutes)
+            if cache_age_seconds < 1800:  # Reasonably recent cache (< 30 minutes)
                 acc_status = cache.acc_status or False
                 is_online = cache.is_online or False
                 gps_status = "online" if (latitude is not None and longitude is not None) else "offline"
@@ -556,8 +556,8 @@ def get_device_states(
         if cache.updated_at:
             cache_age_seconds = (datetime.now() - cache.updated_at).total_seconds()
         
-        # Use cached data if it's fresh (< 300 seconds = 5 minutes)
-        if cache_age_seconds < 300:
+        # Use cached data if reasonably recent (< 1800 seconds = 30 minutes)
+        if cache_age_seconds < 1800:
             logger.info(f"[{correlation_id}] ✅ Using CACHED states for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
             
             return {
