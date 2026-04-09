@@ -1,9 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 import logging
 import asyncio
+import time
 
 # Configure logging to show INFO level messages in Render logs
 logging.basicConfig(
@@ -13,6 +14,7 @@ logging.basicConfig(
 
 from routers import auth, devices, media, gps, alarms, tasks, reports, admin, database_info, forwarding, notifications
 from routers import orders, inventory, worker_auth, uploads, income  # OMS
+from routers import monitoring as monitoring_router
 from database import Base, engine
 from models.device_db import DeviceDB
 from models.user_db import UserDB
@@ -74,6 +76,18 @@ app.add_middleware(
     allow_headers=["*"],    # allow all headers
 )
 
+# Request metrics middleware
+from services.monitoring_service import monitoring
+
+@app.middleware("http")
+async def track_request_metrics(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start) * 1000
+    endpoint = f"{request.method} {request.url.path}"
+    monitoring.record_request(endpoint, duration_ms, response.status_code)
+    return response
+
 # Include all routers
 app.include_router(auth.router)
 app.include_router(devices.router)
@@ -91,6 +105,7 @@ app.include_router(inventory.router)    # Inventory management
 app.include_router(worker_auth.router)  # Worker authentication
 app.include_router(uploads.router)      # Photo uploads (Cloudinary)
 app.include_router(income.router)      # Worker income tracking
+app.include_router(monitoring_router.router)  # System monitoring & health dashboard
 
 @app.get("/")
 def root():
