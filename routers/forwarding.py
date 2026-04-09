@@ -313,10 +313,28 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
         device_id = gps_list[0].get("deviceId") if gps_list else None
     elif msg_id == 2:  # Alarm - nested in alarm.base.deviceId
         device_id = data.get("alarm", {}).get("base", {}).get("deviceId")
-    elif msg_id == 3:  # Device Status
-        device_id = data.get("deviceId") or data.get("imei")
+    elif msg_id == 3:  # Device Status — try multiple data structures
+        device_id = (
+            data.get("deviceId") or data.get("imei") or data.get("device_id")
+            or data.get("status", {}).get("deviceId")
+            or data.get("device", {}).get("deviceId")
+        )
+        if not device_id:
+            # Walk all top-level values looking for a nested deviceId
+            for key, val in data.items():
+                if isinstance(val, dict) and val.get("deviceId"):
+                    device_id = val["deviceId"]
+                    break
+                elif isinstance(val, list) and val and isinstance(val[0], dict):
+                    device_id = val[0].get("deviceId")
+                    if device_id:
+                        break
     else:
         device_id = data.get("deviceId") or data.get("imei") or data.get("device_id")
+    
+    # Log raw payload for msgId=3 to debug missing device_id
+    if msg_id == 3 and not device_id:
+        logger.warning(f"⚠️ msgId=3 raw keys: {list(data.keys())}, payload sample: {json.dumps(data)[:500]}")
     
     logger.info(f"📨 Received forwarded data: msgId={msg_id}, device={device_id}")
     
@@ -621,6 +639,8 @@ async def handle_gps_data(db: Session, data: dict):
     
     db.commit()
     logger.info(f"✅ Processed {processed_count} GPS records")
+    from services.monitoring_service import monitoring
+    monitoring.record_forwarding(gps_count=processed_count)
 
 
 async def handle_device_status(db: Session, data: dict):
@@ -832,6 +852,8 @@ async def handle_alarm_data(db: Session, data: dict):
     
     db.commit()
     logger.info(f"✅ Processed {processed_count} alarms for device {device_id}")
+    from services.monitoring_service import monitoring
+    monitoring.record_forwarding(alarm_count=processed_count)
 
 
 # ============================================================================
