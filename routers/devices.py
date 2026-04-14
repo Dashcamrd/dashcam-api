@@ -9,10 +9,11 @@ from typing import Optional, List
 from pydantic import BaseModel
 from database import SessionLocal
 from models.device_db import DeviceDB
-from models.device_cache_db import DeviceCacheDB
+from models.device_cache_db import DeviceCacheDB, AlarmDB
 from models.fcm_token_db import UserNotificationSettingsDB
 from adapters import GPSAdapter
-from datetime import datetime
+from datetime import datetime, timezone
+from fastapi import Query
 from utils.acc_mode import acc_mode_response
 import logging
 
@@ -745,4 +746,107 @@ def set_parking_mode(
     finally:
         db.close()
 
+
+@router.get("/{device_id}/sleep-sessions")
+def get_sleep_sessions(
+    device_id: str,
+    limit: int = Query(5, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return recent sleep sessions for a device.
+
+    A sleep session starts when ACC turns OFF (alarm_type 999003) and ends
+    when ACC turns ON (alarm_type 999002).  If the latest ACC event is OFF
+    and the device cache still shows acc_status=False, the session is
+    marked as ongoing with end_time=null.
+    """
+    user_devices = get_user_devices(
+        current_user["user_id"],
+        is_admin=current_user.get("is_admin", False),
+    )
+    if device_id not in [d.device_id for d in user_devices]:
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    db = SessionLocal()
+    try:
+        # Fetch ACC ON/OFF alarms ordered newest-first
+        acc_alarms = (
+            db.query(AlarmDB)
+            .filter(
+                AlarmDB.device_id == device_id,
+                AlarmDB.alarm_type.in_([999002, 999003]),
+            )
+            .order_by(AlarmDB.alarm_time.desc())
+            .limit(200)
+            .all()
+        )
+
+        # Check current ACC status from cache
+        cache = db.query(DeviceCacheDB).filter(
+            DeviceCacheDB.device_id == device_id
+        ).first()
+        current_acc_on = cache.acc_status if cache else True
+
+        # Build sessions by pairing ACC OFF → ACC ON
+        sessions = []
+        i = 0
+        while i < len(acc_alarms):
+            alarm = acc_alarms[i]
+
+            if alarm.alarm_type == 999002:
+                # ACC ON — this is the END of a sleep session.
+                # Look ahead for the matching ACC OFF that started it.
+                end_time = alarm.alarm_time
+                i += 1
+                # Find the next ACC OFF (going backwards in time)
+                if i < len(acc_alarms) and acc_alarms[i].alarm_type == 999003:
+                    start_time = acc_alarms[i].alarm_time
+                    duration_sec = int((end_time - start_time).total_seconds())
+                    sessions.append({
+                        "start_time": int(start_time.replace(tzinfo=timezone.utc).timestamp()),
+                        "end_time": int(end_time.replace(tzinfo=timezone.utc).timestamp()),
+                        "duration_minutes": max(duration_sec // 60, 1),
+                        "status": "completed",
+                    })
+                    i += 1
+                else:
+                    # ACC ON without a preceding ACC OFF in our window — skip
+                    continue
+
+            elif alarm.alarm_type == 999003:
+                # ACC OFF — this could be an ongoing session
+                start_time = alarm.alarm_time
+                if not current_acc_on and len(sessions) == 0:
+                    # Latest event is ACC OFF and cache confirms ACC is still off
+                    now = datetime.utcnow()
+                    duration_sec = int((now - start_time).total_seconds())
+                    sessions.append({
+                        "start_time": int(start_time.replace(tzinfo=timezone.utc).timestamp()),
+                        "end_time": None,
+                        "duration_minutes": max(duration_sec // 60, 1),
+                        "status": "ongoing",
+                    })
+                i += 1
+            else:
+                i += 1
+
+        # Apply pagination
+        paginated = sessions[offset:offset + limit]
+
+        return {
+            "success": True,
+            "device_id": device_id,
+            "sessions": paginated,
+            "total": len(sessions),
+            "has_more": (offset + limit) < len(sessions),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error fetching sleep sessions for {device_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
