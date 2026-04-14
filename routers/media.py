@@ -700,7 +700,7 @@ def get_parking_download_status(
                 "speed": info.get("downloadSpeed", ""),
                 "remaining": info.get("lastDownloadTime", ""),
             })
-        all_done = all(t["progress"] >= 100 or t["result"] != 0 for t in tasks) if tasks else False
+        all_done = all(t["progress"] >= 100 or t["result"] > 0 for t in tasks) if tasks else False
         return {"success": True, "tasks": tasks, "all_done": all_done}
 
     raise HTTPException(
