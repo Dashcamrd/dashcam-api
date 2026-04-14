@@ -686,6 +686,7 @@ def get_parking_download_status(
 ):
     """Poll download progress for one or more parking video tasks."""
     result = manufacturer_api.get_download_status({"taskIds": request.task_ids})
+    logger.info(f"🅿️ Parking status raw VMS response: {result}")
 
     if result.get("code") in [200, 0]:
         infos = result.get("data", {}).get("downloadingMediaInfos", [])
@@ -700,7 +701,8 @@ def get_parking_download_status(
                 "speed": info.get("downloadSpeed", ""),
                 "remaining": info.get("lastDownloadTime", ""),
             })
-        all_done = all(t["progress"] >= 100 or t["result"] > 0 for t in tasks) if tasks else False
+        all_done = all(t["progress"] >= 100 for t in tasks) if tasks else False
+        logger.info(f"🅿️ Parking status parsed: tasks={tasks}, all_done={all_done}")
         return {"success": True, "tasks": tasks, "all_done": all_done}
 
     raise HTTPException(
