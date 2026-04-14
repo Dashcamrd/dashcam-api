@@ -19,6 +19,7 @@ which can be stale/unreliable.
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
@@ -27,6 +28,10 @@ from models.device_db import DeviceDB
 from services.manufacturer_api_service import manufacturer_api
 
 logger = logging.getLogger(__name__)
+
+_autoconfig_thread_pool = ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="autoconfig"
+)
 
 
 class DeviceAutoConfigService:
@@ -67,79 +72,76 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
             self._task.cancel()
             logger.info("🛑 Device Auto-Configuration Service stopped")
     
+    CYCLE_TIMEOUT = 45
+
     async def _run_worker(self):
         """Main worker loop - syncs device statuses and configures unconfigured devices"""
         logger.info(f"🔄 Auto-config worker started, checking every {self.CHECK_INTERVAL_SECONDS}s")
         
         while self.running:
             try:
-                # First, sync device statuses from manufacturer API
-                await self._sync_device_statuses()
-                
-                # Then process unconfigured devices
-                await self._process_unconfigured_devices()
+                await asyncio.wait_for(
+                    self._run_cycle(), timeout=self.CYCLE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"❌ Auto-config cycle exceeded {self.CYCLE_TIMEOUT}s timeout, skipping"
+                )
             except Exception as e:
                 logger.error(f"❌ Error in auto-config worker: {e}", exc_info=True)
             
-            # Wait before next check
             await asyncio.sleep(self.CHECK_INTERVAL_SECONDS)
-    
-    async def _sync_device_statuses(self):
+
+    async def _run_cycle(self):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_autoconfig_thread_pool, self._sync_device_statuses_blocking)
+        await loop.run_in_executor(_autoconfig_thread_pool, self._process_unconfigured_devices_blocking)
+
+    def _sync_device_statuses_blocking(self):
         """
-        Sync device statuses from device_cache table (populated by data forwarding).
-        Uses acc_status as the most reliable indicator that a device is truly online
-        and ready to receive commands (ACC ON = car running, device powered).
-        
-        IMPORTANT: Also checks if data is fresh (updated recently).
-        If cache is stale (>10 min old), consider device offline even if acc_status=True.
-        This prevents trying to configure devices that went offline but have stale cache data.
+        Runs in a dedicated thread pool. Syncs device statuses from device_cache.
         """
         db: Session = SessionLocal()
         try:
             from models.device_cache_db import DeviceCacheDB
             
-            # Get all devices from database
             devices = db.query(DeviceDB).all()
             
             if not devices:
                 return
             
             now = datetime.utcnow()
-            STALE_THRESHOLD_MINUTES = 10  # Consider data stale if older than 10 min
+            STALE_THRESHOLD_MINUTES = 10
             updated_count = 0
             
             for device in devices:
-                # Get cached status from device_cache (populated by data forwarding)
                 cache = db.query(DeviceCacheDB).filter(
                     DeviceCacheDB.device_id == device.device_id
                 ).first()
                 
                 if not cache:
-                    continue  # No cached data yet for this device
+                    continue
                 
                 old_status = device.status
                 
-                # Check if cache is fresh (updated within threshold)
                 cache_is_fresh = False
                 if cache.updated_at:
                     age_minutes = (now - cache.updated_at).total_seconds() / 60
                     cache_is_fresh = age_minutes <= STALE_THRESHOLD_MINUTES
                 
-                # Device is online ONLY if:
-                # 1. acc_status = True (ACC is ON)
-                # 2. Cache is fresh (data received recently, not stale)
-                new_status = "online" if (cache.acc_status and cache_is_fresh) else "offline"
-                
-                # Update device status from cache
+                if cache.acc_status and cache_is_fresh:
+                    new_status = "online"
+                elif device.parking_mode and cache_is_fresh:
+                    new_status = "online"
+                else:
+                    new_status = "offline"
                 device.status = new_status
                 
-                # If device ACC just turned ON (with fresh data), update last_online_at
                 if old_status == "offline" and new_status == "online":
                     device.last_online_at = now
                     logger.info(f"📡 Device {device.device_id} ACC turned ON at {now}")
                     updated_count += 1
                 elif new_status == "online" and device.last_online_at is None:
-                    # Device ACC was already ON but we don't have last_online_at
                     device.last_online_at = cache.last_online_time or now
                     updated_count += 1
             
@@ -153,11 +155,10 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
         finally:
             db.close()
     
-    async def _process_unconfigured_devices(self):
-        """Find and configure unconfigured online devices"""
+    def _process_unconfigured_devices_blocking(self):
+        """Runs in a dedicated thread pool. Finds and configures unconfigured online devices."""
         db: Session = SessionLocal()
         try:
-            # Get all online devices that are not configured
             devices = self._get_unconfigured_online_devices(db)
             
             if not devices:
@@ -166,7 +167,7 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
             logger.info(f"📋 Found {len(devices)} unconfigured online devices to process")
             
             for device in devices:
-                await self._process_device(db, device)
+                self._process_device_blocking(db, device)
                 
         finally:
             db.close()
@@ -186,8 +187,8 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
             (DeviceDB.configured == None) | (DeviceDB.configured == "no")
         ).all()
     
-    async def _process_device(self, db: Session, device: DeviceDB):
-        """Process a single device for configuration"""
+    def _process_device_blocking(self, db: Session, device: DeviceDB):
+        """Process a single device for configuration (runs in thread pool)"""
         device_id = device.device_id
         attempts = device.config_attempts or 0
         last_attempt = device.config_last_attempt
@@ -195,14 +196,10 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
         
         now = datetime.utcnow()
         
-        # Calculate required delay
         if attempts == 0:
-            # First attempt: wait 3 minutes after coming online
             if last_online is None:
-                # Device is online but we don't have last_online_at yet
-                # This shouldn't happen if status sync is working, but handle gracefully
                 logger.debug(f"⏳ Device {device_id}: waiting for online timestamp (status sync)")
-                return  # Will check again next cycle
+                return
             
             required_wait = last_online + timedelta(minutes=self.INITIAL_DELAY_MINUTES)
             if now < required_wait:
@@ -210,9 +207,8 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                 logger.debug(f"⏳ Device {device_id}: waiting {remaining}m before first config attempt")
                 return
         else:
-            # Retry: wait 5 minutes after last attempt
             if last_attempt is None:
-                last_attempt = now - timedelta(minutes=self.RETRY_DELAY_MINUTES + 1)  # Force retry
+                last_attempt = now - timedelta(minutes=self.RETRY_DELAY_MINUTES + 1)
             
             required_wait = last_attempt + timedelta(minutes=self.RETRY_DELAY_MINUTES)
             if now < required_wait:
@@ -220,51 +216,35 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                 logger.debug(f"⏳ Device {device_id}: waiting {remaining}m before retry attempt #{attempts + 1}")
                 return
         
-        # Time to attempt configuration
         logger.info(f"🔧 Attempting to configure device {device_id} (attempt #{attempts + 1})")
         
-        success = await self._send_configuration(device_id)
+        success = self._send_configuration_blocking(device_id)
         
         if success:
-            # Mark as configured
             device.configured = "yes"
             device.config_last_attempt = now
             device.config_attempts = attempts + 1
             db.commit()
             logger.info(f"✅ Device {device_id} configured successfully!")
         else:
-            # Record failed attempt
             device.config_last_attempt = now
             device.config_attempts = attempts + 1
             db.commit()
             logger.warning(f"❌ Device {device_id} configuration failed (attempt #{attempts + 1}), will retry in {self.RETRY_DELAY_MINUTES}m")
     
-    async def _send_configuration(self, device_id: str) -> bool:
-        """
-        Send the configuration command to the device via text delivery.
-        
-        The command updates the device's INI configuration from an FTP server.
-        
-        API requires:
-        - name: Task name (required)
-        - content: Delivery content (required)
-        - contentTypes: ["1"]=Screen display, ["2"]=Voice broadcast (required)
-        - deviceId: Single device ID string (required)
-        - operator: Who triggered this (optional)
-        """
+    def _send_configuration_blocking(self, device_id: str) -> bool:
+        """Send config command to device (runs in thread pool)"""
         try:
-            # Use manufacturer API to send text delivery
             result = manufacturer_api.send_text({
-                "name": f"AutoConfig-{device_id}",  # Required task name
+                "name": f"AutoConfig-{device_id}",
                 "content": self.CONFIG_COMMAND,
-                "contentTypes": ["1"],  # 1 = Screen display (execute command)
-                "deviceId": device_id,  # Single device ID (not array)
-                "operator": "system"  # Who triggered this
+                "contentTypes": ["1"],
+                "deviceId": device_id,
+                "operator": "system"
             })
             
             logger.info(f"📡 Config command sent to {device_id}, response: {result}")
             
-            # Check for success
             if result.get("code") in [0, 200] or result.get("message") == "success":
                 return True
             else:
@@ -285,16 +265,17 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
         }
     
     async def configure_device_manually(self, device_id: str) -> Dict:
-        """
-        Manually trigger configuration for a specific device.
-        Useful for testing or forcing reconfiguration.
-        """
+        """Manually trigger configuration for a specific device."""
         logger.info(f"🔧 Manual configuration triggered for device {device_id}")
-        
-        success = await self._send_configuration(device_id)
-        
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _autoconfig_thread_pool,
+            self._configure_device_manually_blocking, device_id
+        )
+
+    def _configure_device_manually_blocking(self, device_id: str) -> Dict:
+        success = self._send_configuration_blocking(device_id)
         if success:
-            # Update database
             db: Session = SessionLocal()
             try:
                 device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
@@ -305,15 +286,19 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                     db.commit()
             finally:
                 db.close()
-            
             return {"success": True, "message": f"Device {device_id} configured successfully"}
         else:
             return {"success": False, "message": f"Failed to configure device {device_id}"}
     
     async def reset_device_config(self, device_id: str) -> Dict:
-        """
-        Reset configuration status for a device to trigger reconfiguration.
-        """
+        """Reset configuration status for a device to trigger reconfiguration."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _autoconfig_thread_pool,
+            self._reset_device_config_blocking, device_id
+        )
+
+    def _reset_device_config_blocking(self, device_id: str) -> Dict:
         db: Session = SessionLocal()
         try:
             device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
@@ -321,7 +306,7 @@ update INI ftp://zxy:zxy1@chinamdvr.com:21/LST/DRD.config.ini
                 device.configured = "no"
                 device.config_attempts = 0
                 device.config_last_attempt = None
-                device.last_online_at = datetime.utcnow()  # Set to now to trigger 3-min wait
+                device.last_online_at = datetime.utcnow()
                 db.commit()
                 logger.info(f"🔄 Configuration reset for device {device_id}")
                 return {"success": True, "message": f"Device {device_id} configuration reset"}

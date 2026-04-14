@@ -12,6 +12,7 @@ well within the 60 req/min rate limit.
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -19,10 +20,13 @@ from sqlalchemy.orm import Session
 
 from database import SessionLocal
 from models.device_db import DeviceDB
-from models.device_cache_db import DeviceCacheDB
+from models.device_cache_db import DeviceCacheDB, AlarmDB
 from services.manufacturer_api_service import manufacturer_api
+from services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
+
+_sync_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vms-sync")
 
 
 class VMSSyncService:
@@ -74,13 +78,22 @@ class VMSSyncService:
     # Worker loop
     # ------------------------------------------------------------------
 
+    SYNC_CYCLE_TIMEOUT = 45
+
     async def _run_worker(self):
         logger.info(
             f"🔄 VMS sync worker started, polling every {self.SYNC_INTERVAL_SECONDS}s"
         )
         while self.running:
             try:
-                await self._sync_cycle()
+                await asyncio.wait_for(
+                    self._sync_cycle(), timeout=self.SYNC_CYCLE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                self._last_error = "Sync cycle timed out"
+                logger.error(
+                    f"❌ VMS sync cycle exceeded {self.SYNC_CYCLE_TIMEOUT}s timeout, skipping"
+                )
             except Exception as e:
                 self._last_error = str(e)
                 logger.error(f"❌ VMS sync cycle error: {e}", exc_info=True)
@@ -95,7 +108,10 @@ class VMSSyncService:
 
         # Single auth check — avoids hammering VMS with N login attempts
         # when the token is invalid (each API call would retry independently).
-        auth_ok = await asyncio.to_thread(manufacturer_api._ensure_valid_token)
+        loop = asyncio.get_running_loop()
+        auth_ok = await loop.run_in_executor(
+            _sync_thread_pool, manufacturer_api._ensure_valid_token
+        )
         if not auth_ok:
             logger.warning("⚠️ VMS sync: auth failed, skipping cycle")
             self._last_error = "VMS authentication failed"
@@ -155,7 +171,9 @@ class VMSSyncService:
         self, db: Session, device_ids: List[str]
     ) -> int:
         try:
-            result = await asyncio.to_thread(
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                _sync_thread_pool,
                 manufacturer_api.get_device_states, {"deviceIds": device_ids}
             )
         except Exception as e:
@@ -172,6 +190,7 @@ class VMSSyncService:
 
         device_list = (result.get("data") or {}).get("list") or []
         updated = 0
+        acc_changes: List[Dict[str, Any]] = []
 
         for item in device_list:
             did = item.get("deviceId")
@@ -189,18 +208,87 @@ class VMSSyncService:
             ).first()
 
             now = datetime.utcnow()
+            previous_acc = None
             if cache is None:
                 cache = DeviceCacheDB(device_id=did)
                 db.add(cache)
+            else:
+                previous_acc = cache.acc_status
+
+            dev_row = db.query(DeviceDB).filter(DeviceDB.device_id == did).first()
+            parking_enabled = dev_row.parking_mode if dev_row else False
 
             cache.acc_status = acc_on
-            cache.is_online = is_online
-            if is_online:
+            if not acc_on and parking_enabled:
+                cache.is_online = True
+            else:
+                cache.is_online = is_online
+            cache.parking_mode = parking_enabled
+            if cache.is_online:
                 cache.last_online_time = now
             cache.updated_at = now
             updated += 1
 
+            if previous_acc is not None and previous_acc != acc_on:
+                acc_changes.append({
+                    "device_id": did,
+                    "acc_on": acc_on,
+                    "previous": previous_acc,
+                    "lat": cache.latitude,
+                    "lng": cache.longitude,
+                    "speed": (cache.speed / 10.0) if cache.speed else None,
+                })
+
+        if acc_changes:
+            self._process_acc_notifications(db, acc_changes)
+
         return updated
+
+    def _process_acc_notifications(
+        self, db: Session, changes: List[Dict[str, Any]]
+    ) -> None:
+        """Create alarm records and send push notifications for ACC changes."""
+        import json as _json
+
+        for ch in changes:
+            did = ch["device_id"]
+            acc_on = ch["acc_on"]
+            try:
+                device = db.query(DeviceDB).filter(DeviceDB.device_id == did).first()
+                device_name = device.name if device else did
+
+                alarm_type_id = 999002 if acc_on else 999003
+                alarm_name = "ACC ON - Engine Started" if acc_on else "ACC OFF - Engine Stopped"
+                new_alarm = AlarmDB(
+                    device_id=did,
+                    alarm_type=alarm_type_id,
+                    alarm_type_name=alarm_name,
+                    alarm_level=1,
+                    latitude=ch.get("lat"),
+                    longitude=ch.get("lng"),
+                    speed=ch.get("speed"),
+                    alarm_time=datetime.utcnow(),
+                    alarm_data=_json.dumps({
+                        "type": "acc_change",
+                        "acc_status": "on" if acc_on else "off",
+                        "device_name": device_name,
+                        "source": "vms_sync",
+                    }),
+                )
+                db.add(new_alarm)
+
+                sent = NotificationService.send_acc_notification(
+                    db=db,
+                    device_id=did,
+                    acc_on=acc_on,
+                    previous_acc_status=ch["previous"],
+                )
+                logger.info(
+                    f"📱 [sync] ACC {'ON' if acc_on else 'OFF'} for {did} — "
+                    f"sent {sent} notifications"
+                )
+            except Exception as e:
+                logger.error(f"❌ [sync] notification error for {did}: {e}")
 
     # ------------------------------------------------------------------
     # GPS (batched)
@@ -218,7 +306,9 @@ class VMSSyncService:
         self, db: Session, batch: List[str]
     ) -> int:
         try:
-            result = await asyncio.to_thread(
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                _sync_thread_pool,
                 manufacturer_api.get_latest_gps_v2, {"deviceId": batch}
             )
         except Exception as e:

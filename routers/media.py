@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from fastapi.responses import StreamingResponse
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
+from datetime import datetime, timezone
 import logging
 import uuid
 import httpx
@@ -612,5 +613,186 @@ async def websocket_video_proxy(
             pass
     finally:
         logger.info(f"[{correlation_id}] WebSocket proxy connection closed")
+
+
+# ============================================================================
+# Parking Mode Video Download Endpoints
+# ============================================================================
+
+class ParkingDownloadRequest(BaseModel):
+    device_id: str
+    date: str  # YYYY-MM-DD
+    channels: List[int] = [1]
+
+class ParkingStatusRequest(BaseModel):
+    task_ids: List[str]
+
+class ParkingStopRequest(BaseModel):
+    task_id: str
+
+
+@router.post("/parking/download")
+def create_parking_download(
+    request: ParkingDownloadRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Create a download task for parking mode video.
+    The VMS pulls the file from the camera SD card; poll /parking/status
+    until progress reaches 100, then fetch with /parking/file.
+    """
+    if not verify_device_access(request.device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    try:
+        date_obj = datetime.strptime(request.date, "%Y-%m-%d")
+        start_ts = int(date_obj.replace(hour=0, minute=0, second=0, tzinfo=timezone.utc).timestamp())
+        end_ts = int(date_obj.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    result = manufacturer_api.create_download_task({
+        "deviceId": request.device_id,
+        "startTime": start_ts,
+        "endTime": end_ts,
+        "downloadType": 2,       # video only
+        "channels": request.channels,
+        "downloadFileFormat": 0, # mp4
+        "fileSavedPosition": 1,  # local on VMS
+        "streamType": 0,
+        "storeType": 0,
+    })
+
+    if result.get("code") in [200, 0]:
+        task_ids = result.get("data", {}).get("taskIds", [])
+        return {
+            "success": True,
+            "task_ids": task_ids,
+            "device_id": request.device_id,
+            "date": request.date,
+            "channels": request.channels,
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Failed to create download task: {result.get('message', 'Unknown error')}",
+    )
+
+
+@router.post("/parking/status")
+def get_parking_download_status(
+    request: ParkingStatusRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Poll download progress for one or more parking video tasks."""
+    result = manufacturer_api.get_download_status({"taskIds": request.task_ids})
+
+    if result.get("code") in [200, 0]:
+        infos = result.get("data", {}).get("downloadingMediaInfos", [])
+        tasks = []
+        for info in infos:
+            tasks.append({
+                "task_id": info.get("taskId"),
+                "device_id": info.get("deviceId"),
+                "progress": info.get("progress", 0),
+                "result": info.get("downloadResult", -1),
+                "file_size": info.get("filesize", 0),
+                "speed": info.get("downloadSpeed", ""),
+                "remaining": info.get("lastDownloadTime", ""),
+            })
+        all_done = all(t["progress"] >= 100 or t["result"] != 0 for t in tasks) if tasks else False
+        return {"success": True, "tasks": tasks, "all_done": all_done}
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Failed to get download status: {result.get('message', 'Unknown error')}",
+    )
+
+
+@router.post("/parking/stop")
+def stop_parking_download(
+    request: ParkingStopRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Cancel a running parking video download task."""
+    result = manufacturer_api.stop_download_task({"taskId": request.task_id})
+
+    if result.get("code") in [200, 0]:
+        return {"success": True, "task_id": request.task_id, "message": "Download stopped"}
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Failed to stop download: {result.get('message', 'Unknown error')}",
+    )
+
+
+@router.get("/parking/file")
+async def download_parking_file(
+    task_id: str = Query(..., description="Completed download task ID"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Proxy-stream the finished MP4 from VMS to the client.
+    Works identically to /media/proxy but builds the URL from the task ID.
+    """
+    download_url = manufacturer_api.build_download_file_url(task_id)
+    try:
+        async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            resp = await client.get(download_url, headers={
+                "X-Token": manufacturer_api.token or "",
+            })
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="VMS download failed")
+
+            content_type = resp.headers.get("content-type", "video/mp4")
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="parking_{task_id}.mp4"',
+                },
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Download timed out")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Download connection error: {str(e)}")
+
+
+@router.get("/parking/quick-download")
+async def quick_download_parking_file(
+    device_id: str = Query(...),
+    start_time: int = Query(..., description="Unix timestamp (seconds)"),
+    end_time: int = Query(..., description="Unix timestamp (seconds)"),
+    channel: int = Query(1),
+    stream_type: int = Query(0),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Direct small-file download (realDownloadDeviceMedia).
+    For short parking clips that don't need the task workflow.
+    """
+    if not verify_device_access(device_id, current_user):
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    download_url = manufacturer_api.build_real_download_url(
+        device_id, start_time, end_time, channel, stream_type
+    )
+    try:
+        async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            resp = await client.get(download_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="VMS download failed")
+
+            content_type = resp.headers.get("content-type", "video/mp4")
+            filename = f"parking_{device_id}_{start_time}_{end_time}_ch{channel}.mp4"
+            return StreamingResponse(
+                iter([resp.content]),
+                media_type=content_type,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Download timed out")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Download connection error: {str(e)}")
 
 

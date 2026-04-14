@@ -26,6 +26,7 @@ from models.device_cache_db import DeviceCacheDB, AlarmDB
 from models.device_db import DeviceDB
 from models.fcm_token_db import FCMTokenDB, UserNotificationSettingsDB
 from services.notification_service import NotificationService
+from utils.acc_mode import acc_mode_response
 
 router = APIRouter(prefix="/api/forwarding", tags=["Data Forwarding"])
 logger = logging.getLogger(__name__)
@@ -267,7 +268,7 @@ def get_alarm_category(type_id: int) -> str:
 
 
 @router.post("/receive")
-async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)):
+def receive_forwarded_data(request: Request, db: Session = Depends(get_db), data: dict = None):
     """
     Receives real-time data forwarded from vendor.
     
@@ -298,10 +299,7 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
             logger.warning(f"⚠️ Unauthorized forwarding request from {request.client.host}")
             raise HTTPException(status_code=401, detail="Invalid vendor authentication key")
     
-    try:
-        data = await request.json()
-    except Exception as e:
-        logger.error(f"❌ Failed to parse JSON: {e}")
+    if data is None:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
     
     
@@ -340,11 +338,11 @@ async def receive_forwarded_data(request: Request, db: Session = Depends(get_db)
     
     try:
         if msg_id == 1:  # GPS Data
-            await handle_gps_data(db, data)
+            handle_gps_data(db, data)
         elif msg_id == 2:  # Alarm Data
-            await handle_alarm_data(db, data)
+            handle_alarm_data(db, data)
         elif msg_id == 3:  # Device Status (ACC, Online/Offline)
-            await handle_device_status(db, data, extracted_device_id=device_id)
+            handle_device_status(db, data, extracted_device_id=device_id)
         else:
             # Unknown message type - log and accept
             logger.warning(f"⚠️ Unknown msgId: {msg_id}, data: {json.dumps(data)[:500]}")
@@ -513,7 +511,7 @@ def _create_acc_alarm(db: Session, device_id: str, acc_on: bool, lat=None, lng=N
     logger.info(f"📋 ACC alarm record created for {device_id}: {'ON' if acc_on else 'OFF'}")
 
 
-async def handle_gps_data(db: Session, data: dict):
+def handle_gps_data(db: Session, data: dict):
     """
     Process forwarded GPS data.
     
@@ -643,7 +641,7 @@ async def handle_gps_data(db: Session, data: dict):
     monitoring.record_forwarding(gps_count=processed_count)
 
 
-async def handle_device_status(db: Session, data: dict, extracted_device_id: str = None):
+def handle_device_status(db: Session, data: dict, extracted_device_id: str = None):
     """
     Process device status changes (ACC ON/OFF, Online/Offline).
     """
@@ -676,6 +674,10 @@ async def handle_device_status(db: Session, data: dict, extracted_device_id: str
     if online_status is not None:
         online_status = online_status in [True, 1, "1", "on", "ON", "online"]
     
+    # Look up persistent parking_mode setting from devices table
+    device_row = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+    parking_enabled = device_row.parking_mode if device_row else False
+
     # Upsert device cache
     existing = db.query(DeviceCacheDB).filter(
         DeviceCacheDB.device_id == device_id
@@ -689,16 +691,27 @@ async def handle_device_status(db: Session, data: dict, extracted_device_id: str
         if acc_status is not None:
             existing.acc_status = acc_status
         if online_status is not None:
-            existing.is_online = online_status
-            if online_status:
+            # Override: keep device ONLINE when parking mode is active and ACC is OFF
+            effective_acc = acc_status if acc_status is not None else existing.acc_status
+            if not effective_acc and parking_enabled:
+                existing.is_online = True
+            else:
+                existing.is_online = online_status
+            if existing.is_online:
                 existing.last_online_time = datetime.utcnow()
+        existing.parking_mode = parking_enabled
         existing.updated_at = datetime.utcnow()
     else:
+        effective_online = online_status if online_status is not None else False
+        effective_acc = acc_status if acc_status is not None else False
+        if not effective_acc and parking_enabled:
+            effective_online = True
         new_cache = DeviceCacheDB(
             device_id=device_id,
-            acc_status=acc_status if acc_status is not None else False,
-            is_online=online_status if online_status is not None else False,
-            last_online_time=datetime.utcnow() if online_status else None
+            acc_status=effective_acc,
+            is_online=effective_online,
+            parking_mode=parking_enabled,
+            last_online_time=datetime.utcnow() if effective_online else None
         )
         db.add(new_cache)
     
@@ -727,7 +740,7 @@ async def handle_device_status(db: Session, data: dict, extracted_device_id: str
     logger.info(f"✅ Updated status for {device_id}: ACC={acc_status}, Online={online_status}")
 
 
-async def handle_alarm_data(db: Session, data: dict):
+def handle_alarm_data(db: Session, data: dict):
     """
     Process alarm events from vendor.
     
@@ -874,7 +887,7 @@ async def handle_alarm_data(db: Session, data: dict):
 # ============================================================================
 
 @router.get("/device/{device_id}/status")
-async def get_cached_device_status(device_id: str, db: Session = Depends(get_db)):
+def get_cached_device_status(device_id: str, db: Session = Depends(get_db)):
     """
     Get cached device status for a single device.
     This is FAST because it reads from our database, not vendor API.
@@ -886,6 +899,8 @@ async def get_cached_device_status(device_id: str, db: Session = Depends(get_db)
     if not cache:
         raise HTTPException(status_code=404, detail="Device not found in cache")
     
+    acc_on = cache.acc_status or False
+    p_mode = cache.parking_mode or False
     return {
         "device_id": cache.device_id,
         "latitude": cache.latitude,
@@ -893,8 +908,9 @@ async def get_cached_device_status(device_id: str, db: Session = Depends(get_db)
         "speed": cache.speed,
         "direction": cache.direction,
         "address": cache.address,
-        "acc_status": cache.acc_status,
+        "acc_status": acc_on,
         "is_online": cache.is_online,
+        **acc_mode_response(acc_on, p_mode),
         "gps_time": cache.gps_time.isoformat() if cache.gps_time else None,
         "last_online_time": cache.last_online_time.isoformat() if cache.last_online_time else None,
         "updated_at": cache.updated_at.isoformat() if cache.updated_at else None
@@ -902,7 +918,7 @@ async def get_cached_device_status(device_id: str, db: Session = Depends(get_db)
 
 
 @router.get("/devices/status")
-async def get_all_cached_device_statuses(db: Session = Depends(get_db)):
+def get_all_cached_device_statuses(db: Session = Depends(get_db)):
     """
     Get cached status for ALL devices in one call.
     Much more efficient than calling vendor API for each device.
@@ -919,8 +935,9 @@ async def get_all_cached_device_statuses(db: Session = Depends(get_db)):
                 "speed": c.speed,
                 "direction": c.direction,
                 "address": c.address,
-                "acc_status": c.acc_status,
+                "acc_status": c.acc_status or False,
                 "is_online": c.is_online,
+                **acc_mode_response(c.acc_status or False, c.parking_mode or False),
                 "gps_time": c.gps_time.isoformat() if c.gps_time else None,
                 "last_online_time": c.last_online_time.isoformat() if c.last_online_time else None,
                 "updated_at": c.updated_at.isoformat() if c.updated_at else None
@@ -931,7 +948,7 @@ async def get_all_cached_device_statuses(db: Session = Depends(get_db)):
 
 
 @router.get("/device/{device_id}/alarms")
-async def get_device_alarms(
+def get_device_alarms(
     device_id: str,
     limit: int = 50,
     unread_only: bool = False,
@@ -970,7 +987,7 @@ async def get_device_alarms(
 
 
 @router.post("/device/{device_id}/alarms/{alarm_id}/acknowledge")
-async def acknowledge_alarm(
+def acknowledge_alarm(
     device_id: str,
     alarm_id: int,
     db: Session = Depends(get_db)
@@ -995,7 +1012,7 @@ async def acknowledge_alarm(
 
 
 @router.get("/stats")
-async def get_forwarding_stats(db: Session = Depends(get_db)):
+def get_forwarding_stats(db: Session = Depends(get_db)):
     """
     Get statistics about cached data.
     Useful for monitoring the data forwarding system.
@@ -1003,6 +1020,7 @@ async def get_forwarding_stats(db: Session = Depends(get_db)):
     total_devices = db.query(DeviceCacheDB).count()
     online_devices = db.query(DeviceCacheDB).filter(DeviceCacheDB.is_online == True).count()
     acc_on_devices = db.query(DeviceCacheDB).filter(DeviceCacheDB.acc_status == True).count()
+    parking_mode_devices = db.query(DeviceCacheDB).filter(DeviceCacheDB.parking_mode == True).count()
     
     total_alarms = db.query(AlarmDB).count()
     unread_alarms = db.query(AlarmDB).filter(AlarmDB.is_read == False).count()
@@ -1016,7 +1034,8 @@ async def get_forwarding_stats(db: Session = Depends(get_db)):
         "devices": {
             "total": total_devices,
             "online": online_devices,
-            "acc_on": acc_on_devices
+            "acc_on": acc_on_devices,
+            "parking_mode": parking_mode_devices
         },
         "alarms": {
             "total": total_alarms,

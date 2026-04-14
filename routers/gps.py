@@ -13,8 +13,10 @@ import logging
 import uuid
 from models.dto import LatestGpsDto, TrackPlaybackDto, TrackPointDto, AccStateDto
 from models.device_cache_db import DeviceCacheDB
+from models.device_db import DeviceDB
 from adapters import GPSAdapter, DeviceAdapter
 from database import SessionLocal
+from utils.acc_mode import acc_mode_response
 
 # Database dependency for FastAPI
 def get_db():
@@ -144,6 +146,8 @@ def get_latest_gps(
         if not location_name and cache.latitude and cache.longitude:
             location_name = GeocodingService.get_location_name(cache.latitude, cache.longitude)
         
+        acc_on = cache.acc_status or False
+        p_mode = cache.parking_mode or False
         return {
             "success": True,
             "device_id": device_id,
@@ -152,7 +156,8 @@ def get_latest_gps(
             "speed": cache.speed,
             "direction": cache.direction,
             "altitude": cache.altitude,
-            "acc_on": cache.acc_status or False,
+            "acc_on": acc_on,
+            **acc_mode_response(acc_on, p_mode),
             "timestamp_ms": timestamp_ms,
             "lastOnlineTime": timestamp_ms,
             "last_online_time_ms": timestamp_ms,
@@ -458,6 +463,7 @@ def get_user_devices_with_gps_status(
             # Always use cached status — forwarding keeps this updated via
             # msgId=3 even when GPS forwarding is broken
             acc_status = cache.acc_status or False
+            p_mode = cache.parking_mode or False
             is_online = cache.is_online or False
             gps_status = "online" if is_online else "offline"
             
@@ -484,6 +490,7 @@ def get_user_devices_with_gps_status(
                 "status": device.status,
                 "gps_status": gps_status,
                 "acc_status": acc_status,
+                **acc_mode_response(acc_status, p_mode),
                 "last_location": {
                     "latitude": latitude,
                     "longitude": longitude,
@@ -501,6 +508,7 @@ def get_user_devices_with_gps_status(
                 "status": device.status,
                 "gps_status": "offline",
                 "acc_status": False,
+                **acc_mode_response(False, False),
                 "last_location": {
                     "latitude": None,
                     "longitude": None,
@@ -551,12 +559,15 @@ def get_device_states(
         # Always return cached data — stale data is better than timeout
         logger.info(f"[{correlation_id}] ✅ Using CACHED states for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
         
+        acc_on = cache.acc_status or False
+        p_mode = cache.parking_mode or False
         return {
             "success": True,
             "device_id": device_id,
-            "acc_on": cache.acc_status or False,
-            "acc_status": cache.acc_status or False,
+            "acc_on": acc_on,
+            "acc_status": acc_on,
             "is_online": cache.is_online or False,
+            **acc_mode_response(acc_on, p_mode),
             "source": "cache"
         }
     else:
@@ -576,13 +587,18 @@ def get_device_states(
     # Parse response using adapter with correlation ID
     dto = DeviceAdapter.parse_device_states_response(result, device_id, correlation_id)
     
+    # Resolve parking_mode from device settings
+    device_row = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+    p_mode = device_row.parking_mode if device_row else False
+
     if dto:
-        # Return with both snake_case and camelCase field names for compatibility
+        acc_on = dto.acc_on
         response_data = {
             "success": True,
             "device_id": dto.device_id,
-            "acc_on": dto.acc_on,
-            "acc_status": dto.acc_on,  # Alias for Flutter
+            "acc_on": acc_on,
+            "acc_status": acc_on,
+            **acc_mode_response(acc_on, p_mode),
             "source": "vms_api"
         }
         
@@ -591,11 +607,13 @@ def get_device_states(
         # If API fails but we have stale cache, return stale cache
         if cache:
             logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
+            acc_on = cache.acc_status or False
             return {
                 "success": True,
                 "device_id": device_id,
-                "acc_on": cache.acc_status or False,
-                "acc_status": cache.acc_status or False,
+                "acc_on": acc_on,
+                "acc_status": acc_on,
+                **acc_mode_response(acc_on, p_mode),
                 "source": "stale_cache",
                 "warning": "Data may be outdated"
             }

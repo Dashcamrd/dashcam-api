@@ -27,6 +27,7 @@ class DeviceCacheDB(Base):
     # Device Status
     acc_status = Column(Boolean, default=False)  # ACC ON/OFF
     is_online = Column(Boolean, default=False)  # Device online status
+    parking_mode = Column(Boolean, default=False, nullable=False, server_default="false")
     
     # Timestamps
     gps_time = Column(DateTime, nullable=True)  # GPS timestamp from device

@@ -177,6 +177,26 @@ profiles:
         request:
           required: [deviceId, channels, startTime, endTime]
 
+      media_create_download_task:
+        path: /api/v1/media/createDownloadTask
+        method: POST
+        timeout: 30
+        request:
+          required: [deviceId, startTime, endTime, downloadType, channels, downloadFileFormat, fileSavedPosition]
+          optional: [streamType, storeType]
+
+      media_get_download_status:
+        path: /api/v1/media/getDownloadStatus
+        method: POST
+        request:
+          optional: [taskIds]
+
+      media_stop_download_task:
+        path: /api/v1/media/stopDownloadTask
+        method: POST
+        request:
+          required: [taskId]
+
       media_two_way_intercom:
         path: /api/v1/media/deviceTwoWayVoip
         method: POST

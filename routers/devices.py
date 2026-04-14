@@ -13,6 +13,7 @@ from models.device_cache_db import DeviceCacheDB
 from models.fcm_token_db import UserNotificationSettingsDB
 from adapters import GPSAdapter
 from datetime import datetime
+from utils.acc_mode import acc_mode_response
 import logging
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,7 @@ def list_user_devices(current_user: dict = Depends(get_current_user)):
     # Enhance device info with manufacturer API data
     enhanced_devices = []
     for device in user_devices:
+        p_mode = device.parking_mode if hasattr(device, 'parking_mode') else False
         device_info = {
             "id": device.id,
             "device_id": device.device_id,
@@ -169,6 +171,7 @@ def list_user_devices(current_user: dict = Depends(get_current_user)):
             "model": device.model,
             "firmware_version": device.firmware_version,
             "created_at": device.created_at.isoformat() if device.created_at else None,
+            "parking_mode": p_mode or False,
             "online_status": "unknown",
             "last_seen": None
         }
@@ -218,6 +221,7 @@ def get_device_details(
         raise HTTPException(status_code=404, detail="Device not found")
     
     # Get additional info from manufacturer API
+    p_mode = device.parking_mode if hasattr(device, 'parking_mode') else False
     device_info = {
         "id": device.id,
         "device_id": device.device_id,
@@ -227,7 +231,8 @@ def get_device_details(
         "brand": device.brand,
         "model": device.model,
         "firmware_version": device.firmware_version,
-        "created_at": device.created_at.isoformat() if device.created_at else None
+        "created_at": device.created_at.isoformat() if device.created_at else None,
+        "parking_mode": p_mode or False,
     }
     
     # Try to get real-time status and config
@@ -637,5 +642,107 @@ def activate_device(
             status_code=400,
             detail=result.get("message", "Failed to activate device")
         )
+
+
+class ParkingModeRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/{device_id}/parking-mode")
+def set_parking_mode(
+    device_id: str,
+    request: ParkingModeRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Enable or disable parking mode for a device.
+
+    When enabled the camera stays in a low-power monitoring state while
+    ACC is OFF.  The VMS will show the device as ONLINE with acc_mode
+    "orange" (سكون).
+
+    Enabling queues a command to the device (command string TBD).
+    Disabling sends the standard auto-config command to reset the device.
+    """
+    user_devices = get_user_devices(
+        current_user["user_id"],
+        is_admin=current_user.get("is_admin", False),
+    )
+    user_device_ids = [d.device_id for d in user_devices]
+
+    if device_id not in user_device_ids:
+        raise HTTPException(status_code=403, detail="Device not accessible")
+
+    db = SessionLocal()
+    try:
+        device = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        device.parking_mode = request.enabled
+        db.commit()
+
+        # Also update the cache so API responses reflect the change immediately
+        cache = db.query(DeviceCacheDB).filter(
+            DeviceCacheDB.device_id == device_id
+        ).first()
+        if cache:
+            cache.parking_mode = request.enabled
+            # If turning on parking mode while ACC is off, mark device online
+            if request.enabled and not cache.acc_status:
+                cache.is_online = True
+                cache.last_online_time = datetime.utcnow()
+            cache.updated_at = datetime.utcnow()
+            db.commit()
+
+        # Send the appropriate command to the device
+        from services.device_auto_config_service import DeviceAutoConfigService
+
+        command_sent = False
+        if request.enabled:
+            # Parking mode enable command — placeholder until firmware command is provided.
+            # Once the actual command string is known, set it here.
+            command_content = None
+            if command_content:
+                result = manufacturer_api.send_text({
+                    "name": f"ParkingMode-Enable-{device_id}",
+                    "content": command_content,
+                    "contentTypes": ["1"],
+                    "deviceId": device_id,
+                    "operator": "system"
+                })
+                command_sent = result.get("code") in [0, 200] or result.get("message") == "success"
+                logger.info(f"🅿️ Parking mode ENABLE command sent to {device_id}: {result}")
+        else:
+            result = manufacturer_api.send_text({
+                "name": f"ParkingMode-Disable-{device_id}",
+                "content": DeviceAutoConfigService.CONFIG_COMMAND,
+                "contentTypes": ["1"],
+                "deviceId": device_id,
+                "operator": "system"
+            })
+            command_sent = result.get("code") in [0, 200] or result.get("message") == "success"
+            logger.info(f"🅿️ Parking mode DISABLE command sent to {device_id}: {result}")
+
+        acc_on = cache.acc_status if cache else False
+        return {
+            "success": True,
+            "device_id": device_id,
+            "parking_mode": request.enabled,
+            "command_sent": command_sent,
+            **acc_mode_response(acc_on, request.enabled),
+            "message": (
+                "وضع السكون مفعّل" if request.enabled
+                else "وضع السكون معطّل"
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Error setting parking mode for {device_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error setting parking mode: {str(e)}")
+    finally:
+        db.close()
 
 

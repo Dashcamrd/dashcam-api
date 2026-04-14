@@ -493,6 +493,39 @@ class ManufacturerAPIService:
     def get_file_list(self, file_list_data: Dict) -> Dict[str, Any]:
         """Get list of available video file segments"""
         return self._make_request("media_get_file_list", file_list_data)
+
+    # Download task endpoints (parking mode videos)
+    def create_download_task(self, data: Dict) -> Dict[str, Any]:
+        """Create a media download task on the VMS server"""
+        return self._make_request("media_create_download_task", data)
+
+    def get_download_status(self, data: Dict) -> Dict[str, Any]:
+        """Poll download task progress"""
+        return self._make_request("media_get_download_status", data)
+
+    def stop_download_task(self, data: Dict) -> Dict[str, Any]:
+        """Cancel a running download task"""
+        return self._make_request("media_stop_download_task", data)
+
+    def build_download_file_url(self, task_id: str) -> str:
+        """Build the direct download URL for a completed task"""
+        return f"{self.base_url}/api/v1/media/DownloadFile?taskId={task_id}"
+
+    def build_real_download_url(
+        self, device_id: str, start_time: int, end_time: int,
+        channel: int, stream_type: int = 0
+    ) -> str:
+        """Build the direct small-file download URL"""
+        return (
+            f"{self.base_url}/api/v1/media/realDownloadDeviceMedia"
+            f"?deviceid={device_id}"
+            f"&username={self.username}"
+            f"&X-Token={self.token}"
+            f"&starttime={start_time}"
+            f"&endtime={end_time}"
+            f"&channel={channel}"
+            f"&streamtype={stream_type}"
+        )
     
     # Statistics endpoints
     def get_vehicle_details(self, query_data: Dict) -> Dict[str, Any]:

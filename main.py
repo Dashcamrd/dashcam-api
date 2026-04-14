@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import asyncio
 import time
@@ -41,6 +42,8 @@ async def lifespan(app: FastAPI):
     Starts the device auto-configuration background worker.
     """
     # Startup
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=20))
     print("🚀 Starting background services...")
     device_auto_config.start()
     print("✅ Device Auto-Configuration Service started")
@@ -83,10 +86,26 @@ app.add_middleware(
 # Request metrics middleware
 from services.monitoring_service import monitoring
 
+REQUEST_TIMEOUT_SECONDS = 120
+
 @app.middleware("http")
 async def track_request_metrics(request: Request, call_next):
     start = time.time()
-    response = await call_next(request)
+    try:
+        response = await asyncio.wait_for(
+            call_next(request), timeout=REQUEST_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        duration_ms = (time.time() - start) * 1000
+        endpoint = f"{request.method} {request.url.path}"
+        logging.getLogger("main").error(
+            f"Request timeout after {duration_ms:.0f}ms: {endpoint}"
+        )
+        monitoring.record_request(endpoint, duration_ms, 504)
+        return JSONResponse(
+            status_code=504,
+            content={"detail": "Request timed out"},
+        )
     duration_ms = (time.time() - start) * 1000
     endpoint = f"{request.method} {request.url.path}"
     monitoring.record_request(endpoint, duration_ms, response.status_code)

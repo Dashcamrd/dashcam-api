@@ -74,6 +74,7 @@ if __name__ == "__main__":
         host=host, 
         port=port, 
         reload=reload,
+        timeout_keep_alive=30,
         log_level="info"
     )
 

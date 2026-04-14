@@ -21,3 +21,7 @@ class DeviceDB(Base):
     config_last_attempt = Column(DateTime, nullable=True)  # Last configuration attempt timestamp
     config_attempts = Column(Integer, default=0)  # Number of configuration attempts
     last_online_at = Column(DateTime, nullable=True)  # When device came online (for 3-min delay)
+
+    # Parking mode setting — persists across reboots.
+    # When True and ACC is OFF the device stays ONLINE in "سكون" (dormant) state.
+    parking_mode = Column(Boolean, default=False, nullable=False, server_default="false")
