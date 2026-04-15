@@ -901,6 +901,7 @@ def get_cached_device_status(device_id: str, db: Session = Depends(get_db)):
     
     acc_on = cache.acc_status or False
     p_mode = cache.parking_mode or False
+    online = cache.is_online or False
     return {
         "device_id": cache.device_id,
         "latitude": cache.latitude,
@@ -909,8 +910,8 @@ def get_cached_device_status(device_id: str, db: Session = Depends(get_db)):
         "direction": cache.direction,
         "address": cache.address,
         "acc_status": acc_on,
-        "is_online": cache.is_online,
-        **acc_mode_response(acc_on, p_mode),
+        "is_online": online,
+        **acc_mode_response(acc_on, p_mode, online),
         "gps_time": cache.gps_time.isoformat() if cache.gps_time else None,
         "last_online_time": cache.last_online_time.isoformat() if cache.last_online_time else None,
         "updated_at": cache.updated_at.isoformat() if cache.updated_at else None
@@ -936,8 +937,8 @@ def get_all_cached_device_statuses(db: Session = Depends(get_db)):
                 "direction": c.direction,
                 "address": c.address,
                 "acc_status": c.acc_status or False,
-                "is_online": c.is_online,
-                **acc_mode_response(c.acc_status or False, c.parking_mode or False),
+                "is_online": c.is_online or False,
+                **acc_mode_response(c.acc_status or False, c.parking_mode or False, c.is_online or False),
                 "gps_time": c.gps_time.isoformat() if c.gps_time else None,
                 "last_online_time": c.last_online_time.isoformat() if c.last_online_time else None,
                 "updated_at": c.updated_at.isoformat() if c.updated_at else None

@@ -148,6 +148,7 @@ def get_latest_gps(
         
         acc_on = cache.acc_status or False
         p_mode = cache.parking_mode or False
+        online = cache.is_online or False
         return {
             "success": True,
             "device_id": device_id,
@@ -157,7 +158,7 @@ def get_latest_gps(
             "direction": cache.direction,
             "altitude": cache.altitude,
             "acc_on": acc_on,
-            **acc_mode_response(acc_on, p_mode),
+            **acc_mode_response(acc_on, p_mode, online),
             "timestamp_ms": timestamp_ms,
             "lastOnlineTime": timestamp_ms,
             "last_online_time_ms": timestamp_ms,
@@ -490,7 +491,7 @@ def get_user_devices_with_gps_status(
                 "status": device.status,
                 "gps_status": gps_status,
                 "acc_status": acc_status,
-                **acc_mode_response(acc_status, p_mode),
+                **acc_mode_response(acc_status, p_mode, is_online),
                 "last_location": {
                     "latitude": latitude,
                     "longitude": longitude,
@@ -508,7 +509,7 @@ def get_user_devices_with_gps_status(
                 "status": device.status,
                 "gps_status": "offline",
                 "acc_status": False,
-                **acc_mode_response(False, False),
+                **acc_mode_response(False, False, False),
                 "last_location": {
                     "latitude": None,
                     "longitude": None,
@@ -561,13 +562,14 @@ def get_device_states(
         
         acc_on = cache.acc_status or False
         p_mode = cache.parking_mode or False
+        online = cache.is_online or False
         return {
             "success": True,
             "device_id": device_id,
             "acc_on": acc_on,
             "acc_status": acc_on,
-            "is_online": cache.is_online or False,
-            **acc_mode_response(acc_on, p_mode),
+            "is_online": online,
+            **acc_mode_response(acc_on, p_mode, online),
             "source": "cache"
         }
     else:

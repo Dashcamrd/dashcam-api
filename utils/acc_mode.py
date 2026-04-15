@@ -18,21 +18,24 @@ ACC_MODE_LABELS = {
 }
 
 
-def get_acc_mode(acc_on: bool, parking_mode: bool) -> str:
+def get_acc_mode(acc_on: bool, parking_mode: bool, is_online: bool = False) -> str:
     if acc_on:
         return ACC_MODE_GREEN
-    return ACC_MODE_ORANGE if parking_mode else ACC_MODE_RED
+    # ACC off but device online → effectively in parking/sleep mode
+    if parking_mode or is_online:
+        return ACC_MODE_ORANGE
+    return ACC_MODE_RED
 
 
 def get_acc_mode_label(mode: str) -> str:
     return ACC_MODE_LABELS.get(mode, "")
 
 
-def acc_mode_response(acc_on: bool, parking_mode: bool) -> dict:
+def acc_mode_response(acc_on: bool, parking_mode: bool, is_online: bool = False) -> dict:
     """Return a dict fragment to merge into any API response."""
-    mode = get_acc_mode(acc_on, parking_mode)
+    mode = get_acc_mode(acc_on, parking_mode, is_online)
     return {
         "acc_mode": mode,
         "acc_mode_label": get_acc_mode_label(mode),
-        "parking_mode": parking_mode,
+        "parking_mode": parking_mode or (not acc_on and is_online),
     }
