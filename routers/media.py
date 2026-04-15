@@ -2,7 +2,7 @@
 Media Router - Handles video preview, playback, and file management
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
 from typing import Optional, List
@@ -512,26 +512,27 @@ async def proxy_video_stream(
 
 @router.post("/webrtc-proxy")
 async def webrtc_signaling_proxy(
+    request: Request,
     url: str = Query(..., description="VMS WebRTC signaling URL to proxy"),
-    body: bytes = b"",
 ):
     """
     Proxy WebRTC SDP signaling POST to the VMS server.
-    The browser cannot directly reach the VMS (self-signed cert on IP),
-    so this endpoint relays the SDP offer/answer exchange over HTTPS.
+    Browser cannot reach VMS directly (self-signed cert on IP address).
+    ZLMRTCClient.js sends SDP as text/plain; we relay to VMS and return the answer.
+    No auth required — ZLMRTCClient.js cannot provide tokens.
     """
-    from starlette.responses import Response
-    from fastapi import Body as FastBody
-
     correlation_id = str(uuid.uuid4())[:8]
     logger.info(f"[{correlation_id}] WebRTC proxy POST -> {url}")
 
     try:
+        body = await request.body()
+        content_type = request.headers.get("content-type", "text/plain;charset=utf-8")
+
         async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             resp = await client.post(
                 url,
                 content=body,
-                headers={"Content-Type": "application/sdp"},
+                headers={"Content-Type": content_type},
             )
 
         logger.info(f"[{correlation_id}] WebRTC proxy response: {resp.status_code}")
