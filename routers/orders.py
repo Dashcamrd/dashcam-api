@@ -901,14 +901,12 @@ def update_order_status(
     if req.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
 
-    # Block completing unless at least 1 photo is uploaded
-    if req.status == "completed":
-        photo_count = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).count()
-        if photo_count < 1:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot complete order: {photo_count}/1 photos uploaded. Please upload at least 1 photo first."
-            )
+    # Photo upload is optional for now (temporary)
+    # TODO: re-enable photo requirement when ready
+    # if req.status == "completed":
+    #     photo_count = db.query(OrderPhotoDB).filter(OrderPhotoDB.order_id == order_id).count()
+    #     if photo_count < 1:
+    #         raise HTTPException(status_code=400, detail="Upload at least 1 photo first.")
 
     old_status = order.status
     old_payment = order.payment_status
