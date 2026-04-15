@@ -1,7 +1,7 @@
 """
 Media Router - Handles video preview, playback, and file management
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from services.auth_service import get_current_user, get_user_devices
 from services.manufacturer_api_service import manufacturer_api
@@ -508,6 +508,57 @@ async def proxy_video_stream(
     except Exception as e:
         logger.error(f"Error proxying video stream: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.api_route("/webrtc-proxy", methods=["POST", "GET"])
+async def webrtc_signaling_proxy(
+    request: Request,
+    url: str = Query(..., description="VMS WebRTC signaling URL to proxy"),
+):
+    """
+    Proxy WebRTC SDP signaling to the VMS server.
+    The browser cannot directly reach the VMS (self-signed cert on IP),
+    so this endpoint relays the SDP offer/answer exchange over HTTPS.
+    """
+    from starlette.responses import Response
+
+    correlation_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{correlation_id}] WebRTC proxy: {request.method} -> {url}")
+
+    try:
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
+        body = await request.body()
+
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            verify=False,
+        ) as client:
+            if request.method == "POST":
+                resp = await client.post(
+                    url,
+                    content=body,
+                    headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
+                )
+            else:
+                resp = await client.get(url)
+
+        logger.info(f"[{correlation_id}] WebRTC proxy response: {resp.status_code}")
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            headers={
+                "Content-Type": resp.headers.get("content-type", "application/json"),
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="VMS WebRTC signaling timeout")
+    except Exception as e:
+        logger.error(f"[{correlation_id}] WebRTC proxy error: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.websocket("/ws-proxy")
