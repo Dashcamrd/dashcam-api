@@ -771,6 +771,25 @@ def get_sleep_sessions(
 
     db = SessionLocal()
     try:
+        # Only return sleep sessions if parking mode is currently enabled
+        device_row = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
+        cache = db.query(DeviceCacheDB).filter(
+            DeviceCacheDB.device_id == device_id
+        ).first()
+
+        parking_enabled = (device_row.parking_mode if device_row else False) or \
+                          (cache.parking_mode if cache else False)
+
+        if not parking_enabled:
+            return {
+                "success": True,
+                "device_id": device_id,
+                "sessions": [],
+                "total": 0,
+                "has_more": False,
+                "parking_mode": False,
+            }
+
         # Fetch ACC ON/OFF alarms ordered newest-first
         acc_alarms = (
             db.query(AlarmDB)
@@ -783,10 +802,6 @@ def get_sleep_sessions(
             .all()
         )
 
-        # Check current ACC status from cache
-        cache = db.query(DeviceCacheDB).filter(
-            DeviceCacheDB.device_id == device_id
-        ).first()
         current_acc_on = cache.acc_status if cache else True
 
         # Build sessions by pairing ACC OFF → ACC ON
@@ -841,6 +856,7 @@ def get_sleep_sessions(
             "sessions": paginated,
             "total": len(sessions),
             "has_more": (offset + limit) < len(sessions),
+            "parking_mode": True,
         }
     except HTTPException:
         raise
