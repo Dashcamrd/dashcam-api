@@ -512,8 +512,8 @@ async def proxy_video_stream(
 
 @router.post("/webrtc-proxy")
 async def webrtc_signaling_proxy(
-    request: Request,
     url: str = Query(..., description="VMS WebRTC signaling URL to proxy"),
+    body: bytes = b"",
 ):
     """
     Proxy WebRTC SDP signaling POST to the VMS server.
@@ -521,31 +521,24 @@ async def webrtc_signaling_proxy(
     so this endpoint relays the SDP offer/answer exchange over HTTPS.
     """
     from starlette.responses import Response
+    from fastapi import Body as FastBody
 
     correlation_id = str(uuid.uuid4())[:8]
     logger.info(f"[{correlation_id}] WebRTC proxy POST -> {url}")
 
     try:
-        body = await request.body()
-
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            verify=False,
-        ) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
             resp = await client.post(
                 url,
                 content=body,
-                headers={"Content-Type": request.headers.get("content-type", "application/sdp")},
+                headers={"Content-Type": "application/sdp"},
             )
 
         logger.info(f"[{correlation_id}] WebRTC proxy response: {resp.status_code}")
         return Response(
             content=resp.content,
             status_code=resp.status_code,
-            headers={
-                "Content-Type": resp.headers.get("content-type", "application/json"),
-                "Access-Control-Allow-Origin": "*",
-            },
+            media_type=resp.headers.get("content-type", "application/json"),
         )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="VMS WebRTC signaling timeout")
