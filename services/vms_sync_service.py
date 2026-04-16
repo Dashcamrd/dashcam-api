@@ -127,8 +127,12 @@ class VMSSyncService:
             self._devices_synced = len(device_ids)
 
             status_count = await self._sync_device_states(db, device_ids)
-            db.flush()  # make new rows visible before GPS phase
-            gps_count = await self._sync_gps(db, device_ids)
+            db.flush()
+            # GPS sync disabled — forwarding webhooks provide real-time GPS.
+            # API polling overwrites fresh positions with stale data.
+            # To re-enable: uncomment the line below.
+            # gps_count = await self._sync_gps(db, device_ids)
+            gps_count = 0
 
             db.commit()
 

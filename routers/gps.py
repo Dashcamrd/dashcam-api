@@ -168,110 +168,26 @@ def get_latest_gps(
             "source": "cache"
         }
     else:
-        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
+        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, no GPS data available yet")
     
     # ========================================
-    # FALLBACK: Call VMS API if cache is stale/missing
+    # VMS API fallback DISABLED — forwarding webhooks are the sole GPS source.
+    # API polling returns stale data that overwrites real-time positions.
+    # To re-enable: uncomment the block below.
     # ========================================
-    logger.info(f"[{correlation_id}] 🔄 Calling VMS API for latest GPS (device: {device_id})")
-    
-    # Always use cache.updated_at for lastOnlineTime (most reliable source)
-    cache_timestamp_ms = None
-    if cache and cache.updated_at:
-        cache_timestamp_ms = int(cache.updated_at.timestamp() * 1000)
-    
-    # Use V2 API ONLY - no V1 fallback
-    result = manufacturer_api.get_latest_gps_v2({"deviceId": device_id})
-    
-    # Check if vendor API returned an error first
-    if result.get("code") == -1 or result.get("code") not in [200, 0]:
-        error_msg = result.get("message", "Unknown error from vendor API")
-        logger.warning(f"[{correlation_id}] Vendor API error for latest GPS: {error_msg}")
-        
-        # If API fails but we have stale cache, return stale cache with warning
-        if cache and cache.latitude is not None:
-            logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
-            timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
-            
-            return {
-                "success": True,
-                "device_id": device_id,
-                "latitude": cache.latitude,
-                "longitude": cache.longitude,
-                "speed": cache.speed,
-                "direction": cache.direction,
-                "timestamp_ms": timestamp_ms,
-                "lastOnlineTime": timestamp_ms,
-                "last_online_time_ms": timestamp_ms,
-                "address": cache.address,
-                "location_name": cache.address or "Location unavailable",
-                "source": "stale_cache",
-                "warning": "Data may be outdated"
-            }
-        
-        # Check for vendor API infrastructure errors (database, connection issues)
-        error_msg_lower = str(error_msg).lower()
-        if "mysql" in error_msg_lower or "database" in error_msg_lower or "connection" in error_msg_lower:
-            logger.error(f"[{correlation_id}] Vendor API infrastructure error: {error_msg}")
-            return {
-                "success": False,
-                "device_id": device_id,
-                "latitude": None,
-                "longitude": None,
-                "message": "Vendor API temporarily unavailable - please try again later",
-                "is_offline": True,
-                "error_type": "vendor_infrastructure_error"
-            }
-        
-        # Return graceful response - don't treat as fatal error
-        return {
-            "success": False,
-            "device_id": device_id,
-            "latitude": None,
-            "longitude": None,
-            "message": "GPS data temporarily unavailable",
-            "is_offline": True
-        }
-    
-    # Parse response using adapter with correlation ID (V2 only)
-    dto = GPSAdapter.parse_latest_gps_response(result, device_id, correlation_id, use_v2_only=True)
-    
-    if dto:
-        # Return with multiple field name formats for Flutter compatibility
-        response_data = dto.model_dump(by_alias=False)
-        
-        # ALWAYS use cache.updated_at for lastOnlineTime (most reliable source)
-        # VMS API sometimes returns wrong timestamp for sleeping devices
-        final_timestamp_ms = cache_timestamp_ms if cache_timestamp_ms is not None else dto.timestamp_ms
-        
-        # Always include timestamp fields (even if None) so Flutter knows what to look for
-        response_data["timestamp_ms"] = final_timestamp_ms
-        
-        # Add timestamp aliases if available (or None if not available)
-        response_data["lastOnlineTime"] = final_timestamp_ms
-        response_data["last_online_time_ms"] = final_timestamp_ms
-        response_data["last_online_time"] = final_timestamp_ms
-        
-        # Get geocoded address from coordinates (same as devices screen)
-        if dto.latitude is not None and dto.longitude is not None:
-            location_name = GeocodingService.get_location_name(dto.latitude, dto.longitude)
-            response_data["address"] = location_name
-            response_data["location_name"] = location_name
-        
-        response_data["source"] = "vms_api"  # Indicate data source for debugging
-        
-        return {"success": True, **response_data}
-    else:
-        # No GPS data available - return graceful response
-        logger.info(f"[{correlation_id}] No GPS data found for device {device_id}")
-        return {
-            "success": False,
-            "device_id": device_id,
-            "latitude": None,
-            "longitude": None,
-            "message": "No GPS data available for this device",
-            "is_offline": True
-        }
+    # result = manufacturer_api.get_latest_gps_v2({"deviceId": device_id})
+    return {
+        "success": False,
+        "device_id": device_id,
+        "latitude": None,
+        "longitude": None,
+        "message": "Waiting for GPS data from device",
+        "is_offline": True,
+        "source": "no_cache"
+    }
+
+    # --- VMS API FALLBACK DISABLED ---
+    # To re-enable: remove the return above and uncomment the VMS API call block.
 
 @router.post("/track-dates")
 def query_track_dates(
@@ -573,53 +489,18 @@ def get_device_states(
             "source": "cache"
         }
     else:
-        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, falling back to VMS API")
+        logger.info(f"[{correlation_id}] ⚠️ No cache for {device_id}, no state data available yet")
     
-    # ========================================
-    # FALLBACK: Call VMS API if cache is stale/missing
-    # ========================================
-    logger.info(f"[{correlation_id}] 🔄 Calling VMS API for device states (device: {device_id})")
-    
-    # Build request using adapter
-    request_data = DeviceAdapter.build_device_states_request([device_id])
-    
-    # Call manufacturer API
-    result = manufacturer_api.get_device_states({"deviceId": device_id})
-    
-    # Parse response using adapter with correlation ID
-    dto = DeviceAdapter.parse_device_states_response(result, device_id, correlation_id)
-    
-    # Resolve parking_mode from device settings
-    device_row = db.query(DeviceDB).filter(DeviceDB.device_id == device_id).first()
-    p_mode = device_row.parking_mode if device_row else False
-
-    if dto:
-        acc_on = dto.acc_on
-        response_data = {
-            "success": True,
-            "device_id": dto.device_id,
-            "acc_on": acc_on,
-            "acc_status": acc_on,
-            **acc_mode_response(acc_on, p_mode),
-            "source": "vms_api"
-        }
-        
-        return response_data
-    else:
-        # If API fails but we have stale cache, return stale cache
-        if cache:
-            logger.info(f"[{correlation_id}] ⚠️ VMS API failed, returning STALE cache data")
-            acc_on = cache.acc_status or False
-            return {
-                "success": True,
-                "device_id": device_id,
-                "acc_on": acc_on,
-                "acc_status": acc_on,
-                **acc_mode_response(acc_on, p_mode),
-                "source": "stale_cache",
-                "warning": "Data may be outdated"
-            }
-        
-        raise HTTPException(status_code=500, detail="Failed to fetch device states")
+    # VMS API fallback disabled — forwarding webhooks are the sole data source.
+    # To re-enable: uncomment the block below.
+    return {
+        "success": False,
+        "device_id": device_id,
+        "acc_on": False,
+        "acc_status": False,
+        "is_online": False,
+        "source": "no_cache",
+        "message": "Waiting for device data"
+    }
 
 
