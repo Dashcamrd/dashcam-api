@@ -16,5 +16,5 @@ cryptography
 PyYAML
 resend
 firebase-admin
-cloudinary
+google-cloud-storage
 psutil

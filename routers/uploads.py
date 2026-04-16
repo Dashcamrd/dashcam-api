@@ -1,94 +1,100 @@
 """
-Uploads Router — Cloudinary photo upload for order completion photos
+Uploads Router — Google Cloud Storage photo/video upload for order completion
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from services.auth_service import get_current_user
 from typing import Optional
-import cloudinary
-import cloudinary.uploader
-import cloudinary.utils
+from google.cloud import storage
 import logging
 import os
 import base64
+import time
+import io
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
-# ════════════════════════════════════════════════════════════
-#  Configure Cloudinary
-# ════════════════════════════════════════════════════════════
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "dashcamrd-media")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.dashcamrd.com")
 
-cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME", "dkhf8b9oj"),
-    api_key=os.getenv("CLOUDINARY_API_KEY", "665622679134625"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET", "UtFDJHPjS85NCdYkiTcxN264X40"),
-    secure=True,
-)
+_gcs_client = None
+_gcs_bucket = None
 
 
-# ════════════════════════════════════════════════════════════
-#  Pydantic schemas
-# ════════════════════════════════════════════════════════════
+def _get_bucket():
+    global _gcs_client, _gcs_bucket
+    if _gcs_bucket is None:
+        _gcs_client = storage.Client()
+        _gcs_bucket = _gcs_client.bucket(GCS_BUCKET_NAME)
+    return _gcs_bucket
+
 
 class UploadPhotoRequest(BaseModel):
-    image_base64: str          # Base64 encoded image data
-    order_id: int              # Which order this photo belongs to
-    photo_type: Optional[str] = None  # before / after / receipt
-    filename: Optional[str] = None    # Original filename
+    image_base64: str
+    order_id: int
+    photo_type: Optional[str] = None
+    filename: Optional[str] = None
 
-
-# ════════════════════════════════════════════════════════════
-#  Upload photo to Cloudinary
-# ════════════════════════════════════════════════════════════
 
 @router.post("/photo")
 def upload_photo(
     req: UploadPhotoRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Upload an order completion photo to Cloudinary.
-    Returns the secure URL for the uploaded image.
-    Always converts to JPEG for universal compatibility (HEIC, PNG, WebP → JPEG).
-    """
+    """Upload an order completion photo to GCS. Returns the serving URL."""
     try:
-        # Detect source format for proper data URI
-        ext = "jpeg"
-        if req.filename:
-            lower_name = req.filename.lower()
-            if lower_name.endswith(".png"):
-                ext = "png"
-            elif lower_name.endswith(".heic") or lower_name.endswith(".heif"):
-                ext = "heic"
-            elif lower_name.endswith(".webp"):
-                ext = "webp"
+        image_data = base64.b64decode(req.image_base64)
 
-        data_uri = f"data:image/{ext};base64,{req.image_base64}"
+        timestamp = int(time.time())
+        photo_type = req.photo_type or "photo"
+        user_id = current_user["user_id"]
+        blob_name = f"dashcam_orders/order_{req.order_id}/{photo_type}_{user_id}_{timestamp}.jpg"
 
-        # Upload to Cloudinary — force JPEG output for universal compatibility
-        # This handles HEIC (iPhone), PNG, WebP → always serves JPEG
-        result = cloudinary.uploader.upload(
-            data_uri,
-            folder=f"dashcam_orders/order_{req.order_id}",
-            public_id=f"{req.photo_type or 'photo'}_{current_user['user_id']}_{int(__import__('time').time())}",
-            resource_type="image",
-            format="jpg",            # Convert to JPEG on storage
-            quality="auto:good",     # Smart quality compression
-        )
+        bucket = _get_bucket()
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(image_data, content_type="image/jpeg")
 
-        secure_url = result.get("secure_url", "")
-        logger.info(f"✅ Photo uploaded to Cloudinary: {secure_url} (order={req.order_id})")
+        serving_url = f"{API_BASE_URL}/uploads/media/{blob_name}"
+        logger.info(f"Uploaded photo to GCS: {blob_name} (order={req.order_id})")
 
         return {
             "success": True,
-            "url": secure_url,
-            "public_id": result.get("public_id", ""),
-            "width": result.get("width"),
-            "height": result.get("height"),
+            "url": serving_url,
+            "public_id": blob_name,
+            "width": None,
+            "height": None,
         }
 
     except Exception as e:
-        logger.error(f"❌ Cloudinary upload failed: {e}")
+        logger.error(f"GCS upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Photo upload failed: {str(e)}")
 
+
+@router.get("/media/{file_path:path}")
+async def serve_media(file_path: str):
+    """Serve a file from GCS. Caches heavily since order photos are immutable."""
+    try:
+        bucket = _get_bucket()
+        blob = bucket.blob(file_path)
+
+        if not blob.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        content = blob.download_as_bytes()
+        content_type = blob.content_type or "image/jpeg"
+
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to serve media {file_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve file")

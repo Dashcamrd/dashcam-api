@@ -126,7 +126,7 @@ app.include_router(notifications.router)  # Push notifications management
 app.include_router(orders.router)       # Order Management System
 app.include_router(inventory.router)    # Inventory management
 app.include_router(worker_auth.router)  # Worker authentication
-app.include_router(uploads.router)      # Photo uploads (Cloudinary)
+app.include_router(uploads.router)      # Photo uploads (GCS)
 app.include_router(income.router)      # Worker income tracking
 app.include_router(monitoring_router.router)  # System monitoring & health dashboard
 
