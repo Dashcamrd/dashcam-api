@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -9,6 +9,13 @@ class UserCreate(BaseModel):
     name: str
     email: Optional[str] = None
     password: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Name cannot be empty")
+        return v.strip()
 
 class UserLogin(BaseModel):
     invoice_no: str
