@@ -140,7 +140,8 @@ def get_latest_gps(
         # better than a 30+ second timeout waiting for VMS API
         logger.info(f"[{correlation_id}] ✅ Using CACHED GPS for {device_id} (age: {cache_age_seconds:.0f}s) - NO VMS API CALL")
         
-        timestamp_ms = int(cache.updated_at.timestamp() * 1000) if cache.updated_at else None
+        ts_source = cache.last_online_time or cache.gps_time or cache.updated_at
+        timestamp_ms = int(ts_source.timestamp() * 1000) if ts_source else None
         
         location_name = cache.address
         if not location_name and cache.latitude and cache.longitude:

@@ -604,7 +604,8 @@ def handle_gps_data(db: Session, data: dict):
             existing.gps_time = gps_time
             existing.acc_status = acc_status
             existing.is_online = True
-            existing.last_online_time = datetime.utcnow()
+            if acc_status:
+                existing.last_online_time = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
         else:
             address = None
@@ -625,7 +626,7 @@ def handle_gps_data(db: Session, data: dict):
                 gps_time=gps_time,
                 acc_status=acc_status,
                 is_online=True,
-                last_online_time=datetime.utcnow(),
+                last_online_time=datetime.utcnow() if acc_status else None,
                 address=address,
             )
             db.add(new_cache)
@@ -718,7 +719,7 @@ def handle_device_status(db: Session, data: dict, extracted_device_id: str = Non
                 existing.is_online = True
             else:
                 existing.is_online = online_status
-            if existing.is_online:
+            if existing.is_online and effective_acc:
                 existing.last_online_time = datetime.utcnow()
         existing.parking_mode = parking_enabled
         existing.updated_at = datetime.utcnow()
@@ -732,7 +733,7 @@ def handle_device_status(db: Session, data: dict, extracted_device_id: str = Non
             acc_status=effective_acc,
             is_online=effective_online,
             parking_mode=parking_enabled,
-            last_online_time=datetime.utcnow() if effective_online else None
+            last_online_time=datetime.utcnow() if (effective_online and effective_acc) else None
         )
         db.add(new_cache)
     
@@ -826,7 +827,8 @@ def handle_alarm_data(db: Session, data: dict):
             existing_cache.longitude = lng
         existing_cache.acc_status = acc_status
         existing_cache.is_online = True
-        existing_cache.last_online_time = datetime.utcnow()
+        if acc_status:
+            existing_cache.last_online_time = datetime.utcnow()
         existing_cache.updated_at = datetime.utcnow()
     elif lat and lng:
         new_cache = DeviceCacheDB(
@@ -835,7 +837,7 @@ def handle_alarm_data(db: Session, data: dict):
             longitude=lng,
             acc_status=acc_status,
             is_online=True,
-            last_online_time=datetime.utcnow()
+            last_online_time=datetime.utcnow() if acc_status else None
         )
         db.add(new_cache)
     
