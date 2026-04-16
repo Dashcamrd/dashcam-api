@@ -584,6 +584,18 @@ def handle_gps_data(db: Session, data: dict):
         
         if existing:
             previous_acc_status = existing.acc_status
+
+            # Geocode only when position changed significantly (~111m)
+            if lat and lng:
+                from services.geocoding_service import GeocodingService
+                if GeocodingService.should_geocode(existing.latitude, existing.longitude, lat, lng):
+                    try:
+                        address = GeocodingService.reverse_geocode(lat, lng)
+                        if address:
+                            existing.address = address
+                    except Exception as e:
+                        logger.debug(f"Geocoding skipped for {device_id}: {e}")
+
             existing.latitude = lat
             existing.longitude = lng
             existing.speed = speed
@@ -595,6 +607,14 @@ def handle_gps_data(db: Session, data: dict):
             existing.last_online_time = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
         else:
+            address = None
+            if lat and lng:
+                try:
+                    from services.geocoding_service import GeocodingService
+                    address = GeocodingService.reverse_geocode(lat, lng)
+                except Exception:
+                    pass
+
             new_cache = DeviceCacheDB(
                 device_id=device_id,
                 latitude=lat,
@@ -605,7 +625,8 @@ def handle_gps_data(db: Session, data: dict):
                 gps_time=gps_time,
                 acc_status=acc_status,
                 is_online=True,
-                last_online_time=datetime.utcnow()
+                last_online_time=datetime.utcnow(),
+                address=address,
             )
             db.add(new_cache)
         
