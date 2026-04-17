@@ -701,9 +701,7 @@ def set_parking_mode(
 
         command_sent = False
         if request.enabled:
-            # Parking mode enable command — placeholder until firmware command is provided.
-            # Once the actual command string is known, set it here.
-            command_content = None
+            command_content = "#!/bin/sh\nupdate DVR ftp://tl:tl@180.167.106.70:31/LST/MT95L-A3_T102V029_MS_DRD_LS_20260414.bin\n#end"
             if command_content:
                 result = manufacturer_api.send_text({
                     "name": f"ParkingMode-Enable-{device_id}",
