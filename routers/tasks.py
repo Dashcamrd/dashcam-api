@@ -323,13 +323,13 @@ def send_text_message(
     if not verify_device_access(request.device_id, current_user):
         raise HTTPException(status_code=403, detail="Device not accessible")
     
-    # Build request using adapter
-    text_data = TaskAdapter.build_text_delivery_request(
-        device_ids=[request.device_id],
-        content=request.text
-    )
+    text_data = {
+        "name": f"Text Delivery {request.device_id}",
+        "content": request.text,
+        "contentTypes": ["0"],
+        "deviceId": request.device_id,
+    }
     
-    # Call manufacturer API
     result = manufacturer_api.send_text(text_data)
     
     if result.get("code") in (200, 0):
@@ -357,7 +357,7 @@ def _build_wifi_command(ssid: str, password: str) -> str:
     """Build the full $WIFIAP command string."""
     encoded_ssid = _encode_wifi_string(ssid)
     encoded_password = _encode_wifi_string(password)
-    return f"$WIFIAP,1,{encoded_ssid},{encoded_password},192168001001,255255255000,008008008008"
+    return f"$WIFIAP,1,{encoded_ssid},{encoded_password},192168161001,255255255000,008008008008"
 
 @router.post("/wifi-password")
 def change_wifi_password(
@@ -387,26 +387,54 @@ def change_wifi_password(
 
     logger.info(f"Sending WiFi password change to device {request.device_id}")
 
-    text_data = TaskAdapter.build_text_delivery_request(
-        device_ids=[request.device_id],
-        content=command
-    )
+    text_data = {
+        "name": f"WiFi AP Config {request.device_id}",
+        "content": command,
+        "contentTypes": ["0"],
+        "deviceId": request.device_id,
+    }
 
     result = manufacturer_api.send_text(text_data)
+    api_code = result.get("code")
+    logger.info(f"WiFi send_text result for {request.device_id}: code={api_code}, msg={result.get('message')}")
 
-    if result.get("code") in (200, 0):
-        data = result.get("data", {})
+    if api_code in (200, 0):
         return {
             "success": True,
             "device_id": request.device_id,
             "ssid": ssid,
-            "sent_at": TaskAdapter.convert_timestamp_to_ms(data.get("sentAt")) if data.get("sentAt") else None,
+            "password": password,
+            "status": "sent",
             "message": "WiFi password change command sent successfully"
         }
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to send WiFi command: {result.get('message', 'Unknown error')}"
-        )
+
+    logger.info(f"Device {request.device_id} send_text failed (code={api_code}), queuing via createTask")
+    task_data = {
+        "name": f"WiFi-{request.device_id}",
+        "content": command,
+        "contentTypes": ["0"],
+        "conditions": {"deviceIds": [request.device_id]},
+        "status": 1,
+    }
+    task_result = manufacturer_api.create_text_delivery_task(task_data)
+    task_code = task_result.get("code")
+    logger.info(f"WiFi createTask result for {request.device_id}: code={task_code}, msg={task_result.get('message')}")
+
+    if task_code in (200, 0):
+        task_id = task_result.get("data", {}).get("id")
+        return {
+            "success": True,
+            "device_id": request.device_id,
+            "ssid": ssid,
+            "password": password,
+            "status": "queued",
+            "task_id": task_id,
+            "message": "Device offline. Command queued and will execute when device comes online."
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Failed to send WiFi command: {result.get('message', 'Unknown error')}"
+    )
 
 
