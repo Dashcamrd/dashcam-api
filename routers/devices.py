@@ -700,28 +700,45 @@ def set_parking_mode(
         from services.device_auto_config_service import DeviceAutoConfigService
 
         command_sent = False
+        command_status = "failed"
         if request.enabled:
             command_content = "#!/bin/sh\nupdate DVR ftp://tl:tl@180.167.106.70:31/LST/MT95L-A3_T102V029_MS_DRD_LS_20260414.bin\n#end"
-            if command_content:
-                result = manufacturer_api.send_text({
-                    "name": f"ParkingMode-Enable-{device_id}",
-                    "content": command_content,
-                    "contentTypes": ["1"],
-                    "deviceId": device_id,
-                    "operator": "system"
-                })
-                command_sent = result.get("code") in [0, 200] or result.get("message") == "success"
-                logger.info(f"🅿️ Parking mode ENABLE command sent to {device_id}: {result}")
+            command_name = f"ParkingMode-Enable-{device_id}"
         else:
-            result = manufacturer_api.send_text({
-                "name": f"ParkingMode-Disable-{device_id}",
-                "content": DeviceAutoConfigService.CONFIG_COMMAND,
+            command_content = DeviceAutoConfigService.CONFIG_COMMAND
+            command_name = f"ParkingMode-Disable-{device_id}"
+
+        result = manufacturer_api.send_text({
+            "name": command_name,
+            "content": command_content,
+            "contentTypes": ["1"],
+            "deviceId": device_id,
+            "operator": "system"
+        })
+        api_code = result.get("code")
+
+        if api_code in [0, 200] or result.get("message") == "success":
+            command_sent = True
+            command_status = "sent"
+            logger.info(f"🅿️ Parking mode {'ENABLE' if request.enabled else 'DISABLE'} command sent to {device_id}: {result}")
+        elif api_code == 1102:
+            logger.info(f"🅿️ Device {device_id} offline, queuing parking mode command via createTask")
+            task_result = manufacturer_api.create_text_delivery_task({
+                "name": command_name,
+                "content": command_content,
                 "contentTypes": ["1"],
-                "deviceId": device_id,
-                "operator": "system"
+                "conditions": {"deviceIds": [device_id]},
+                "status": 1,
             })
-            command_sent = result.get("code") in [0, 200] or result.get("message") == "success"
-            logger.info(f"🅿️ Parking mode DISABLE command sent to {device_id}: {result}")
+            task_code = task_result.get("code")
+            if task_code in [0, 200]:
+                command_sent = True
+                command_status = "queued"
+                logger.info(f"🅿️ Parking mode command queued for {device_id}: {task_result}")
+            else:
+                logger.error(f"❌ Failed to queue parking mode command for {device_id}: {task_result}")
+        else:
+            logger.error(f"❌ Parking mode command failed for {device_id}: {result}")
 
         acc_on = cache.acc_status if cache else False
         return {
@@ -729,6 +746,7 @@ def set_parking_mode(
             "device_id": device_id,
             "parking_mode": request.enabled,
             "command_sent": command_sent,
+            "command_status": command_status,
             **acc_mode_response(acc_on, request.enabled),
             "message": (
                 "وضع السكون مفعّل" if request.enabled
